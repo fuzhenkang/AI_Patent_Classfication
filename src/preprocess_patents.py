@@ -10,9 +10,13 @@ from typing import Iterable
 
 
 REQUIRED_COLUMNS = ["PN", "title", "abstract"]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_HIT_STOPWORDS_PATH = PROJECT_ROOT / "data" / "stopwords" / "hit_stopwords.txt"
+DEFAULT_USER_STOPWORDS_PATH = PROJECT_ROOT / "data" / "stopwords" / "user_stopwords.txt"
+DEFAULT_PATENT_PHRASES_PATH = PROJECT_ROOT / "data" / "stopwords" / "patent_phrases.txt"
 
 
-DEFAULT_STOPWORDS = {
+FALLBACK_STOPWORDS = {
     "的",
     "了",
     "和",
@@ -35,9 +39,6 @@ DEFAULT_STOPWORDS = {
     "外",
     "该",
     "其",
-    "它",
-    "他",
-    "她",
     "这",
     "此",
     "从",
@@ -48,17 +49,6 @@ DEFAULT_STOPWORDS = {
     "而",
     "但",
     "等",
-    "进行",
-    "通过",
-    "根据",
-    "用于",
-    "包括",
-    "包含",
-    "具有",
-    "得到",
-    "获得",
-    "实现",
-    "提供",
 }
 
 
@@ -71,7 +61,7 @@ INLINE_PARTICLE_STOPWORDS = {
 }
 
 
-DEFAULT_PATENT_PHRASES = {
+FALLBACK_PATENT_PHRASES = {
     "本发明",
     "本实用新型",
     "本外观设计",
@@ -185,12 +175,30 @@ def parse_args() -> argparse.Namespace:
         help="Treat the first three columns as PN,title,abstract when the CSV has no header.",
     )
     parser.add_argument(
+        "--hit-stopwords-file",
+        default=str(DEFAULT_HIT_STOPWORDS_PATH),
+        help="HIT Chinese stopword list path. Defaults to data/stopwords/hit_stopwords.txt.",
+    )
+    parser.add_argument(
+        "--user-stopwords-file",
+        default=str(DEFAULT_USER_STOPWORDS_PATH),
+        help="User stopword dictionary for corpus-specific unlisted stopwords.",
+    )
+    parser.add_argument(
         "--stopwords-file",
-        help="Optional UTF-8 text file with one extra stopword per line.",
+        action="append",
+        default=[],
+        help="Optional extra stopword file. Can be passed multiple times.",
     )
     parser.add_argument(
         "--patent-phrases-file",
-        help="Optional UTF-8 text file with one extra patent boilerplate phrase per line.",
+        default=str(DEFAULT_PATENT_PHRASES_PATH),
+        help="Patent boilerplate phrase dictionary path.",
+    )
+    parser.add_argument(
+        "--no-default-stopwords",
+        action="store_true",
+        help="Disable default HIT and user stopword dictionaries.",
     )
     parser.add_argument(
         "--keep-original-columns",
@@ -200,17 +208,45 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_terms(path: str | None) -> set[str]:
+def load_terms(path: str | Path | None, *, required: bool = False) -> set[str]:
     if not path:
         return set()
 
     term_path = Path(path)
+    if not term_path.exists():
+        if required:
+            raise FileNotFoundError(f"Dictionary file not found: {term_path}")
+        return set()
+
     with term_path.open("r", encoding="utf-8-sig") as file:
         return {
             line.strip()
             for line in file
             if line.strip() and not line.lstrip().startswith("#")
         }
+
+
+def load_stopwords(args: argparse.Namespace) -> set[str]:
+    if args.no_default_stopwords:
+        stopwords: set[str] = set()
+    else:
+        stopwords = set(FALLBACK_STOPWORDS)
+        stopwords |= load_terms(args.hit_stopwords_file)
+        stopwords |= load_terms(args.user_stopwords_file)
+
+    for path in args.stopwords_file:
+        stopwords |= load_terms(path, required=True)
+
+    return stopwords
+
+
+def load_patent_phrases(args: argparse.Namespace) -> set[str]:
+    phrases = set(FALLBACK_PATENT_PHRASES)
+    phrases |= load_terms(args.patent_phrases_file)
+    if not args.no_default_stopwords:
+        # User stopwords are corpus-specific unlisted terms, so remove them as phrases too.
+        phrases |= load_terms(args.user_stopwords_file)
+    return phrases
 
 
 def read_patent_csv(path: str, encoding: str, no_header: bool) -> pd.DataFrame:
@@ -250,22 +286,20 @@ def remove_terms(text: str, terms: Iterable[str]) -> str:
 
 def remove_stopwords(text: str, stopwords: set[str]) -> str:
     tokens = text.split()
-    if len(tokens) > 1:
-        cleaned_tokens = []
-        for token in tokens:
-            if token in stopwords:
-                continue
-            for word in INLINE_PARTICLE_STOPWORDS & stopwords:
-                token = token.replace(word, "")
-            if token:
-                cleaned_tokens.append(token)
-        return " ".join(cleaned_tokens)
+    cleaned_tokens = []
 
-    cleaned = text
-    for word in sorted(stopwords, key=len, reverse=True):
-        if word:
-            cleaned = cleaned.replace(word, " ")
-    return cleaned
+    for token in tokens:
+        if token in stopwords:
+            continue
+
+        # For unsegmented Chinese chunks, only remove very safe particles inline.
+        for word in INLINE_PARTICLE_STOPWORDS & stopwords:
+            token = token.replace(word, "")
+
+        if token:
+            cleaned_tokens.append(token)
+
+    return " ".join(cleaned_tokens)
 
 
 def is_missing(value: object) -> bool:
@@ -312,8 +346,8 @@ def build_length_stats(length_series: pd.Series) -> pd.DataFrame:
 
 
 def preprocess(args: argparse.Namespace) -> tuple[Path, Path, pd.DataFrame]:
-    stopwords = DEFAULT_STOPWORDS | load_terms(args.stopwords_file)
-    patent_phrases = DEFAULT_PATENT_PHRASES | load_terms(args.patent_phrases_file)
+    stopwords = load_stopwords(args)
+    patent_phrases = load_patent_phrases(args)
 
     df = read_patent_csv(args.input, args.encoding, args.no_header)
     result = df.copy() if args.keep_original_columns else df[REQUIRED_COLUMNS].copy()

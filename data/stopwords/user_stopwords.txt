@@ -1,0 +1,22 @@
+# User-defined stopword dictionary for corpus-specific unlisted terms.
+# Add one word or phrase per line after inspecting your patent corpus.
+进行
+通过
+根据
+用于
+包括
+包含
+具有
+得到
+获得
+实现
+提供
+涉及
+公开
+提出
+属于
+领域
+方法
+装置
+系统
+设备
