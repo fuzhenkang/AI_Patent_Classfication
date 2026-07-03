@@ -95,13 +95,26 @@ class SimpleLabelEncoder:
         self.classes_: np.ndarray = np.array([])
         self._mapping: dict[object, int] = {}
 
+    @staticmethod
+    def _json_safe(value: object) -> object:
+        if isinstance(value, np.generic):
+            return value.item()
+        return value
+
+    @staticmethod
+    def _key(value: object) -> str:
+        if isinstance(value, np.generic):
+            value = value.item()
+        return str(value)
+
     def fit(self, labels: Sequence[object]) -> "SimpleLabelEncoder":
-        self.classes_ = np.array(sorted(set(labels), key=lambda value: str(value)))
-        self._mapping = {label: idx for idx, label in enumerate(self.classes_)}
+        classes = sorted({self._json_safe(label) for label in labels}, key=lambda value: str(value))
+        self.classes_ = np.array(classes, dtype=object)
+        self._mapping = {self._key(label): idx for idx, label in enumerate(self.classes_)}
         return self
 
     def transform(self, labels: Sequence[object]) -> np.ndarray:
-        return np.array([self._mapping[label] for label in labels], dtype=np.int64)
+        return np.array([self._mapping[self._key(label)] for label in labels], dtype=np.int64)
 
     def inverse_transform(self, labels: Sequence[int]) -> np.ndarray:
         return np.array([self.classes_[int(label)] for label in labels])
@@ -193,16 +206,17 @@ def fit_label_encoder(*label_sequences: Sequence[object]) -> SimpleLabelEncoder:
 def save_label_encoder(encoder: SimpleLabelEncoder, output_dir: str | Path) -> None:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    classes = [SimpleLabelEncoder._json_safe(label) for label in encoder.classes_]
     with (output_path / "label_classes.json").open("w", encoding="utf-8") as file:
-        json.dump(list(encoder.classes_), file, ensure_ascii=False, indent=2)
+        json.dump(classes, file, ensure_ascii=False, indent=2)
 
 
 def load_label_encoder(model_dir: str | Path) -> SimpleLabelEncoder:
     with (Path(model_dir) / "label_classes.json").open("r", encoding="utf-8") as file:
         classes = json.load(file)
     encoder = SimpleLabelEncoder()
-    encoder.classes_ = np.array(classes)
-    encoder._mapping = {label: idx for idx, label in enumerate(encoder.classes_)}
+    encoder.classes_ = np.array(classes, dtype=object)
+    encoder._mapping = {SimpleLabelEncoder._key(label): idx for idx, label in enumerate(encoder.classes_)}
     return encoder
 
 
