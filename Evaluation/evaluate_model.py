@@ -134,6 +134,51 @@ def evaluate_bert(config: dict[str, object], model_dir: Path, test_df: pd.DataFr
     return metrics
 
 
+def evaluate_lora_sequence_classifier(config: dict[str, object], model_dir: Path, test_df: pd.DataFrame, labels: np.ndarray, output_dir: Path, device: torch.device, batch_size: int) -> dict[str, object]:
+    from peft import PeftModel
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+    from LLM.llm_lora_classifier import SequenceClassificationDataset
+
+    label_encoder = load_label_encoder(model_dir)
+    tokenizer_path = model_dir / "tokenizer"
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path if tokenizer_path.exists() else str(config["base_model"]))
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    label_names = [str(label) for label in label_encoder.classes_]
+    id2label = {idx: label for idx, label in enumerate(label_names)}
+    label2id = {label: idx for idx, label in enumerate(label_names)}
+    base_model = AutoModelForSequenceClassification.from_pretrained(
+        str(config["base_model"]),
+        num_labels=len(label_names),
+        id2label=id2label,
+        label2id=label2id,
+    )
+    model = PeftModel.from_pretrained(base_model, model_dir / "adapter")
+    model.to(device)
+    model.eval()
+
+    dataset = SequenceClassificationDataset(test_df[str(config["text_col"])], labels, tokenizer, int(config["max_len"]))
+    loader = DataLoader(dataset, batch_size=batch_size)
+    y_true: list[int] = []
+    y_pred: list[int] = []
+
+    with torch.no_grad():
+        for batch in loader:
+            batch_labels = batch.pop("labels")
+            batch = {key: value.to(device) for key, value in batch.items()}
+            logits = model(**batch).logits
+            y_true.extend(batch_labels.numpy().tolist())
+            y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy().tolist())
+
+    metrics = classification_metrics(y_true, y_pred, label_names)
+    predictions = test_df.copy()
+    predictions["pred_label"] = label_encoder.inverse_transform(y_pred)
+    predictions.to_csv(output_dir / "predictions.csv", index=False, encoding="utf-8-sig")
+    return metrics
+
+
 def main() -> int:
     args = parse_args()
     model_dir = Path(args.model_dir)
@@ -157,6 +202,8 @@ def main() -> int:
         metrics = evaluate_word2vec(config, model_dir, test_df, labels, output_dir, device, batch_size)
     elif str(config["model_type"]) == "bert_cnn":
         metrics = evaluate_bert(config, model_dir, test_df, labels, output_dir, device, batch_size)
+    elif str(config["model_type"]) == "llm_lora_sequence_classification":
+        metrics = evaluate_lora_sequence_classifier(config, model_dir, test_df, labels, output_dir, device, batch_size)
     else:
         raise ValueError(f"Unsupported model type: {config['model_type']}")
 

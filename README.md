@@ -12,6 +12,7 @@ Models/word2vec_cnn.py                  # Word2Vec + CNN
 Models/word2vec_textcnn.py              # Word2Vec + TextCNN
 Models/bert_cnn.py                      # BERT + CNN
 Models/common.py                        # 公共数据、指标、标签编码和交叉验证工具
+LLM/llm_lora_classifier.py              # AutoModelForSequenceClassification + LoRA
 Optimization/optuna_search.py           # 基于训练集 10 折交叉验证均值的 Optuna 参数寻优
 FinalTrain/train_best_model.py          # 使用最优参数在完整训练集上重训最终模型
 Evaluation/evaluate_model.py            # 在独立测试集上评估最终模型
@@ -164,13 +165,72 @@ python FinalTrain\train_best_model.py `
   --bert-model hfl/chinese-roberta-wwm-ext
 ```
 
-## 6. 在测试集上评估最终模型
+## 6. 基于大语言模型的 LoRA 微调分类
+
+也可以直接使用 Hugging Face `AutoModelForSequenceClassification` 结合 LoRA 进行参数高效微调。该脚本默认使用 `hfl/chinese-roberta-wwm-ext`，也可以替换为其他支持序列分类的中文预训练模型。
+
+训练集 10 折交叉验证：
+
+```powershell
+python LLM\llm_lora_classifier.py `
+  --data-csv data\split\train_cv.csv `
+  --output-dir outputs\llm_lora `
+  --text-col text `
+  --label-col label `
+  --base-model hfl/chinese-roberta-wwm-ext `
+  --max-len 256 `
+  --batch-size 16 `
+  --epochs 3 `
+  --lr 0.00002 `
+  --lora-r 8 `
+  --lora-alpha 16 `
+  --lora-dropout 0.1 `
+  --lora-target-modules query,value
+```
+
+如果使用 Qwen/LLaMA 类模型，常见 LoRA 目标模块可以改为：
+
+```powershell
+--lora-target-modules q_proj,v_proj
+```
+
+在完整训练集上重训最终 LoRA 分类模型：
+
+```powershell
+python LLM\llm_lora_classifier.py `
+  --train-csv data\split\train.csv `
+  --output-dir outputs\final\llm_lora `
+  --text-col text `
+  --label-col label `
+  --base-model hfl/chinese-roberta-wwm-ext `
+  --max-len 256 `
+  --batch-size 16 `
+  --epochs 3 `
+  --lr 0.00002 `
+  --lora-r 8 `
+  --lora-alpha 16 `
+  --lora-dropout 0.1 `
+  --lora-target-modules query,value
+```
+
+## 7. 在测试集上评估最终模型
 
 ```powershell
 python Evaluation\evaluate_model.py `
   --model-dir outputs\final\word2vec_cnn `
   --test-csv data\split\test.csv `
   --output-dir outputs\evaluation\word2vec_cnn `
+  --text-col text `
+  --label-col label
+```
+
+LoRA 分类模型测试：
+
+```powershell
+python Evaluation\evaluate_model.py `
+  --model-dir outputs\final\llm_lora `
+  --test-csv data\split\test.csv `
+  --output-dir outputs\evaluation\llm_lora `
   --text-col text `
   --label-col label
 ```
