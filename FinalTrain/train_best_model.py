@@ -9,11 +9,16 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from LLM.llm_registry import MODEL_CONFIGS  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Retrain final model with Optuna best parameters.")
-    parser.add_argument("--model-type", required=True, choices=["word2vec_cnn", "word2vec_textcnn", "bert_cnn"])
+    parser.add_argument(
+        "--model-type",
+        required=True,
+        choices=["word2vec_cnn", "word2vec_textcnn", "bert_cnn", "llm_lora", "llama", "qwen", "glm", "mistral", "baichuan"],
+    )
     parser.add_argument("--best-params", required=True, help="Path to Optuna best_params.json.")
     parser.add_argument("--train-csv", required=True, help="80% training CSV.")
     parser.add_argument("--output-dir", required=True, help="Directory for final retrained model.")
@@ -23,6 +28,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
     parser.add_argument("--bert-model", default="hfl/chinese-roberta-wwm-ext")
+    parser.add_argument("--llm-model-key", default="qwen", choices=sorted(MODEL_CONFIGS))
+    parser.add_argument("--llm-base-model", default=None)
+    parser.add_argument("--lora-target-modules", default=None)
     return parser.parse_args()
 
 
@@ -76,6 +84,21 @@ def build_args(args: argparse.Namespace, best_params: dict[str, object]) -> Simp
         params.setdefault("weight_decay", 0.01)
         params.setdefault("dropout", 0.3)
 
+    if args.model_type in {"llm_lora", "llama", "qwen", "glm", "mistral", "baichuan"}:
+        params["model_key"] = args.llm_model_key if args.model_type == "llm_lora" else args.model_type
+        params["base_model"] = args.llm_base_model
+        params["lora_target_modules"] = args.lora_target_modules
+        params.setdefault("warmup_ratio", 0.1)
+        params.setdefault("lora_r", 8)
+        params.setdefault("lora_alpha", 16)
+        params.setdefault("lora_dropout", 0.1)
+        params.setdefault("torch_dtype", None)
+        params.setdefault("trust_remote_code", False)
+        params.setdefault("batch_size", 4)
+        params.setdefault("epochs", 3)
+        params.setdefault("lr", 2e-5)
+        params.setdefault("weight_decay", 0.01)
+
     return SimpleNamespace(**params)
 
 
@@ -88,8 +111,10 @@ def main() -> int:
         from Models.word2vec_cnn import train
     elif args.model_type == "word2vec_textcnn":
         from Models.word2vec_textcnn import train
-    else:
+    elif args.model_type == "bert_cnn":
         from Models.bert_cnn import train
+    else:
+        from LLM.llm_lora_classifier import train
 
     train(final_args)
     print(f"Final model saved to: {args.output_dir}")

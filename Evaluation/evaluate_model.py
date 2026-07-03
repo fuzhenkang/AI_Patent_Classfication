@@ -154,7 +154,10 @@ def evaluate_lora_sequence_classifier(config: dict[str, object], model_dir: Path
         num_labels=len(label_names),
         id2label=id2label,
         label2id=label2id,
+        trust_remote_code=bool(config.get("trust_remote_code", False)),
     )
+    if getattr(base_model.config, "pad_token_id", None) is None and getattr(base_model.config, "eos_token_id", None) is not None:
+        base_model.config.pad_token_id = base_model.config.eos_token_id
     model = PeftModel.from_pretrained(base_model, model_dir / "adapter")
     model.to(device)
     model.eval()

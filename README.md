@@ -13,6 +13,12 @@ Models/word2vec_textcnn.py              # Word2Vec + TextCNN
 Models/bert_cnn.py                      # BERT + CNN
 Models/common.py                        # 公共数据、指标、标签编码和交叉验证工具
 LLM/llm_lora_classifier.py              # AutoModelForSequenceClassification + LoRA
+LLM/llm_registry.py                     # LLaMA/Qwen/GLM/Mistral/Baichuan 配置注册表
+LLM/qwen_for_classification/finetune.py # Qwen LoRA 分类入口
+LLM/llama_for_classification/finetune.py
+LLM/glm_for_classification/finetune.py
+LLM/mistral_for_classification/finetune.py
+LLM/baichuan_for_classification/finetune.py
 Optimization/optuna_search.py           # 基于训练集 10 折交叉验证均值的 Optuna 参数寻优
 FinalTrain/train_best_model.py          # 使用最优参数在完整训练集上重训最终模型
 Evaluation/evaluate_model.py            # 在独立测试集上评估最终模型
@@ -167,50 +173,86 @@ python FinalTrain\train_best_model.py `
 
 ## 6. 基于大语言模型的 LoRA 微调分类
 
-也可以直接使用 Hugging Face `AutoModelForSequenceClassification` 结合 LoRA 进行参数高效微调。该脚本默认使用 `hfl/chinese-roberta-wwm-ext`，也可以替换为其他支持序列分类的中文预训练模型。
+也可以直接使用 Hugging Face `AutoModelForSequenceClassification` 结合 LoRA 进行参数高效微调。当前支持通过注册表切换以下模型家族：
+
+```text
+llama
+qwen
+glm
+mistral
+baichuan
+chinese_roberta
+```
 
 训练集 10 折交叉验证：
 
 ```powershell
 python LLM\llm_lora_classifier.py `
+  --model-key qwen `
   --data-csv data\split\train_cv.csv `
-  --output-dir outputs\llm_lora `
+  --output-dir outputs\llm_lora\qwen `
   --text-col text `
   --label-col label `
-  --base-model hfl/chinese-roberta-wwm-ext `
   --max-len 256 `
-  --batch-size 16 `
+  --batch-size 4 `
   --epochs 3 `
   --lr 0.00002 `
   --lora-r 8 `
   --lora-alpha 16 `
-  --lora-dropout 0.1 `
-  --lora-target-modules query,value
+  --lora-dropout 0.1
 ```
 
-如果使用 Qwen/LLaMA 类模型，常见 LoRA 目标模块可以改为：
+也可以使用模型家族入口脚本，例如 Qwen：
 
 ```powershell
---lora-target-modules q_proj,v_proj
+python LLM\qwen_for_classification\finetune.py `
+  --data-csv data\split\train_cv.csv `
+  --output-dir outputs\llm_lora\qwen `
+  --text-col text `
+  --label-col label `
+  --cv-folds 10
+```
+
+LLaMA、GLM、Mistral、Baichuan 分别对应：
+
+```powershell
+python LLM\llama_for_classification\finetune.py ...
+python LLM\glm_for_classification\finetune.py ...
+python LLM\mistral_for_classification\finetune.py ...
+python LLM\baichuan_for_classification\finetune.py ...
+```
+
+如果默认模型不适合当前环境，可以用 `--base-model` 覆盖；如果 LoRA 目标模块不匹配，可以用 `--lora-target-modules` 覆盖。例如 Qwen/LLaMA/Mistral 常用 `q_proj,v_proj`，GLM 常用 `query_key_value`，Baichuan2 常用 `W_pack`。
+
+基于 10 折交叉验证的 Optuna 寻优：
+
+```powershell
+python Optimization\optuna_search.py `
+  --model-type qwen `
+  --data-csv data\split\train_cv.csv `
+  --output-dir outputs\optuna\qwen_lora `
+  --text-col text `
+  --label-col label `
+  --cv-folds 10 `
+  --n-trials 10
 ```
 
 在完整训练集上重训最终 LoRA 分类模型：
 
 ```powershell
 python LLM\llm_lora_classifier.py `
+  --model-key qwen `
   --train-csv data\split\train.csv `
-  --output-dir outputs\final\llm_lora `
+  --output-dir outputs\final\qwen_lora `
   --text-col text `
   --label-col label `
-  --base-model hfl/chinese-roberta-wwm-ext `
   --max-len 256 `
-  --batch-size 16 `
+  --batch-size 4 `
   --epochs 3 `
   --lr 0.00002 `
   --lora-r 8 `
   --lora-alpha 16 `
-  --lora-dropout 0.1 `
-  --lora-target-modules query,value
+  --lora-dropout 0.1
 ```
 
 ## 7. 在测试集上评估最终模型
@@ -228,9 +270,9 @@ LoRA 分类模型测试：
 
 ```powershell
 python Evaluation\evaluate_model.py `
-  --model-dir outputs\final\llm_lora `
+  --model-dir outputs\final\qwen_lora `
   --test-csv data\split\test.csv `
-  --output-dir outputs\evaluation\llm_lora `
+  --output-dir outputs\evaluation\qwen_lora `
   --text-col text `
   --label-col label
 ```

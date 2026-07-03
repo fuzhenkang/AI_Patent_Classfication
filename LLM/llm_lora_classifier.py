@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_linear_schedule_with_warmup
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from LLM.llm_registry import MODEL_CONFIGS, get_llm_config  # noqa: E402
 from Models.common import (  # noqa: E402
     average_metrics,
     classification_metrics,
@@ -50,6 +51,7 @@ class SequenceClassificationDataset(Dataset):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train AutoModelForSequenceClassification with LoRA.")
+    parser.add_argument("--model-key", default="chinese_roberta", choices=sorted(MODEL_CONFIGS))
     parser.add_argument("--data-csv", help="Training CSV with optional cv_fold column for k-fold CV.")
     parser.add_argument("--train-csv", help="Training CSV for final training.")
     parser.add_argument("--valid-csv", help="Optional explicit validation CSV.")
@@ -59,11 +61,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fold-col", default="cv_fold")
     parser.add_argument("--cv-folds", type=int, default=10)
     parser.add_argument("--encoding", default="utf-8-sig")
-    parser.add_argument("--base-model", default="hfl/chinese-roberta-wwm-ext")
-    parser.add_argument("--max-len", type=int, default=256)
-    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--base-model", default=None)
+    parser.add_argument("--max-len", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--warmup-ratio", type=float, default=0.1)
     parser.add_argument("--lora-r", type=int, default=8)
@@ -71,12 +73,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-dropout", type=float, default=0.1)
     parser.add_argument(
         "--lora-target-modules",
-        default="query,value",
+        default=None,
         help="Comma-separated LoRA target modules. For LLaMA/Qwen-like models try q_proj,v_proj.",
     )
+    parser.add_argument("--trust-remote-code", action="store_true")
+    parser.add_argument("--torch-dtype", default=None, choices=["auto", "float16", "bfloat16", "float32"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
-    return parser.parse_args()
+    args = parser.parse_args()
+    return apply_model_defaults(args)
+
+
+def apply_model_defaults(args: argparse.Namespace) -> argparse.Namespace:
+    config = get_llm_config(args.model_key)
+    if args.base_model is None:
+        args.base_model = config.base_model
+    if args.lora_target_modules is None:
+        args.lora_target_modules = config.lora_target_modules
+    if args.max_len is None:
+        args.max_len = config.max_len
+    if args.batch_size is None:
+        args.batch_size = config.batch_size
+    if args.lr is None:
+        args.lr = config.lr
+    if args.torch_dtype is None:
+        args.torch_dtype = config.torch_dtype
+    args.trust_remote_code = bool(args.trust_remote_code or config.trust_remote_code)
+    return args
 
 
 def parse_target_modules(value: str) -> list[str]:
@@ -88,12 +111,25 @@ def build_model(args: argparse.Namespace, label_names: list[str]):
 
     id2label = {idx: str(label) for idx, label in enumerate(label_names)}
     label2id = {str(label): idx for idx, label in enumerate(label_names)}
+    model_kwargs = {
+        "num_labels": len(label_names),
+        "id2label": id2label,
+        "label2id": label2id,
+        "trust_remote_code": args.trust_remote_code,
+    }
+    if args.torch_dtype != "auto":
+        dtype_map = {
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "float32": torch.float32,
+        }
+        model_kwargs["torch_dtype"] = dtype_map[args.torch_dtype]
     model = AutoModelForSequenceClassification.from_pretrained(
         args.base_model,
-        num_labels=len(label_names),
-        id2label=id2label,
-        label2id=label2id,
+        **model_kwargs,
     )
+    if getattr(model.config, "pad_token_id", None) is None and getattr(model.config, "eos_token_id", None) is not None:
+        model.config.pad_token_id = model.config.eos_token_id
     lora_config = LoraConfig(
         task_type=TaskType.SEQ_CLS,
         r=args.lora_r,
@@ -276,6 +312,7 @@ def cross_validate(args: argparse.Namespace) -> dict[str, object]:
 
 
 def train(args: argparse.Namespace) -> dict[str, object]:
+    args = apply_model_defaults(args)
     if args.data_csv:
         return cross_validate(args)
     if not args.train_csv:
