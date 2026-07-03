@@ -46,10 +46,44 @@ def read_text_label_csv(path: str | Path, text_col: str, label_col: str, encodin
     missing = [col for col in [text_col, label_col] if col not in df.columns]
     if missing:
         raise ValueError(f"Missing columns in {path}: {', '.join(missing)}")
-    df = df[[text_col, label_col]].dropna()
+    df = df.dropna(subset=[text_col, label_col])
     df[text_col] = df[text_col].astype(str).str.strip()
     df = df[df[text_col] != ""].reset_index(drop=True)
     return df
+
+
+def stratified_kfold_indices(labels: Sequence[object], n_splits: int = 10, seed: int = 42) -> list[np.ndarray]:
+    if n_splits < 2:
+        raise ValueError("n_splits must be at least 2.")
+
+    labels_arr = np.array(list(labels), dtype=object)
+    folds: list[list[int]] = [[] for _ in range(n_splits)]
+    rng = np.random.default_rng(seed)
+
+    for label in sorted(set(labels_arr), key=lambda value: str(value)):
+        label_indices = np.where(labels_arr == label)[0].copy()
+        rng.shuffle(label_indices)
+        for position, index in enumerate(label_indices):
+            folds[position % n_splits].append(int(index))
+
+    return [np.array(sorted(fold), dtype=np.int64) for fold in folds]
+
+
+def average_metrics(metrics_list: Sequence[dict[str, object]]) -> dict[str, object]:
+    if not metrics_list:
+        return {}
+
+    scalar_keys = [
+        key
+        for key, value in metrics_list[0].items()
+        if key != "report" and isinstance(value, (int, float, np.floating))
+    ]
+    averaged: dict[str, object] = {
+        key: float(np.mean([float(metrics[key]) for metrics in metrics_list]))
+        for key in scalar_keys
+    }
+    averaged["fold_metrics"] = list(metrics_list)
+    return averaged
 
 
 def tokenize(text: str) -> list[str]:

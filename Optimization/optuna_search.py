@@ -19,11 +19,12 @@ from Models.word2vec_textcnn import train as train_word2vec_textcnn  # noqa: E40
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Optuna hyperparameter search.")
     parser.add_argument("--model-type", required=True, choices=["word2vec_cnn", "word2vec_textcnn", "bert_cnn"])
-    parser.add_argument("--train-csv", required=True)
-    parser.add_argument("--valid-csv", required=True)
+    parser.add_argument("--data-csv", required=True, help="Full cleaned CSV for stratified k-fold cross-validation.")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--text-col", default="text")
     parser.add_argument("--label-col", default="label")
+    parser.add_argument("--fold-col", default="cv_fold")
+    parser.add_argument("--cv-folds", type=int, default=10)
     parser.add_argument("--encoding", default="utf-8-sig")
     parser.add_argument("--n-trials", type=int, default=20)
     parser.add_argument("--timeout", type=int, default=None, help="Optuna timeout in seconds.")
@@ -36,11 +37,14 @@ def parse_args() -> argparse.Namespace:
 
 def suggest_word2vec_common(trial: optuna.Trial, args: argparse.Namespace, output_dir: Path) -> dict[str, object]:
     return {
-        "train_csv": args.train_csv,
-        "valid_csv": args.valid_csv,
+        "data_csv": args.data_csv,
+        "train_csv": None,
+        "valid_csv": None,
         "output_dir": str(output_dir),
         "text_col": args.text_col,
         "label_col": args.label_col,
+        "fold_col": args.fold_col,
+        "cv_folds": args.cv_folds,
         "encoding": args.encoding,
         "max_len": trial.suggest_categorical("max_len", [128, 256, 384]),
         "min_freq": trial.suggest_categorical("min_freq", [1, 2, 3]),
@@ -72,11 +76,14 @@ def build_trial_args(trial: optuna.Trial, args: argparse.Namespace, output_dir: 
 
     if args.model_type == "bert_cnn":
         return SimpleNamespace(
-            train_csv=args.train_csv,
-            valid_csv=args.valid_csv,
+            data_csv=args.data_csv,
+            train_csv=None,
+            valid_csv=None,
             output_dir=str(output_dir),
             text_col=args.text_col,
             label_col=args.label_col,
+            fold_col=args.fold_col,
+            cv_folds=args.cv_folds,
             encoding=args.encoding,
             bert_model=args.bert_model,
             max_len=trial.suggest_categorical("max_len", [128, 256]),

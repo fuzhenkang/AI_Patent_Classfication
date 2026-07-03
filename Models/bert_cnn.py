@@ -15,12 +15,14 @@ from transformers import AutoModel, AutoTokenizer, get_linear_schedule_with_warm
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from Models.common import (  # noqa: E402
     BertCnnDataset,
+    average_metrics,
     classification_metrics,
     fit_label_encoder,
     get_device,
     read_text_label_csv,
     save_label_encoder,
     set_seed,
+    stratified_kfold_indices,
     write_metrics,
 )
 
@@ -48,11 +50,14 @@ class BertCNN(nn.Module):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train BERT + CNN classifier.")
-    parser.add_argument("--train-csv", required=True)
-    parser.add_argument("--valid-csv", required=True)
+    parser.add_argument("--data-csv", help="Full cleaned CSV for stratified k-fold cross-validation.")
+    parser.add_argument("--train-csv", help="Optional explicit training CSV.")
+    parser.add_argument("--valid-csv", help="Optional explicit validation CSV.")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--text-col", default="text")
     parser.add_argument("--label-col", default="label")
+    parser.add_argument("--fold-col", default="cv_fold")
+    parser.add_argument("--cv-folds", type=int, default=10)
     parser.add_argument("--encoding", default="utf-8-sig")
     parser.add_argument("--bert-model", default="hfl/chinese-roberta-wwm-ext")
     parser.add_argument("--max-len", type=int, default=256)
@@ -87,15 +92,12 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device, label_n
     return classification_metrics(y_true, y_pred, label_names)
 
 
-def train(args: argparse.Namespace) -> dict[str, object]:
-    set_seed(args.seed)
+def train_once(args: argparse.Namespace, train_df, valid_df, output_dir: Path, seed: int) -> dict[str, object]:
+    set_seed(seed)
     device = get_device(args.device)
-    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     kernel_sizes = parse_kernel_sizes(args.kernel_sizes)
 
-    train_df = read_text_label_csv(args.train_csv, args.text_col, args.label_col, args.encoding)
-    valid_df = read_text_label_csv(args.valid_csv, args.text_col, args.label_col, args.encoding)
     encoder = fit_label_encoder(train_df[args.label_col], valid_df[args.label_col])
     y_train = encoder.transform(train_df[args.label_col])
     y_valid = encoder.transform(valid_df[args.label_col])
@@ -146,10 +148,51 @@ def train(args: argparse.Namespace) -> dict[str, object]:
 
     tokenizer.save_pretrained(output_dir / "tokenizer")
     save_label_encoder(encoder, output_dir)
+    config = vars(args).copy()
+    config.update({"model_type": "bert_cnn", "num_classes": len(encoder.classes_)})
     with (output_dir / "config.json").open("w", encoding="utf-8") as file:
-        json.dump(vars(args) | {"model_type": "bert_cnn", "num_classes": len(encoder.classes_)}, file, ensure_ascii=False, indent=2)
+        json.dump(config, file, ensure_ascii=False, indent=2)
     write_metrics(best_metrics, output_dir / "valid_metrics.json")
     return best_metrics
+
+
+def cross_validate(args: argparse.Namespace) -> dict[str, object]:
+    data_df = read_text_label_csv(args.data_csv, args.text_col, args.label_col, args.encoding)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.fold_col in data_df.columns:
+        fold_ids = sorted(data_df[args.fold_col].dropna().unique().tolist())
+        folds = [data_df.index[data_df[args.fold_col] == fold_id].to_numpy() for fold_id in fold_ids]
+    else:
+        folds = stratified_kfold_indices(data_df[args.label_col], n_splits=args.cv_folds, seed=args.seed)
+
+    fold_metrics = []
+    for fold_idx, valid_indices in enumerate(folds):
+        valid_set = set(valid_indices.tolist())
+        train_indices = [idx for idx in data_df.index if idx not in valid_set]
+        train_df = data_df.loc[train_indices].reset_index(drop=True)
+        valid_df = data_df.loc[valid_indices].reset_index(drop=True)
+        print(f"fold={fold_idx + 1}/{len(folds)} train={len(train_df)} valid={len(valid_df)}")
+        metrics = train_once(args, train_df, valid_df, output_dir / f"fold_{fold_idx:02d}", args.seed + fold_idx)
+        fold_metrics.append(metrics)
+
+    cv_metrics = average_metrics(fold_metrics)
+    write_metrics(cv_metrics, output_dir / "cv_metrics.json")
+    with (output_dir / "config.json").open("w", encoding="utf-8") as file:
+        json.dump(vars(args) | {"model_type": "bert_cnn", "cv_folds_actual": len(folds)}, file, ensure_ascii=False, indent=2)
+    print(json.dumps({k: v for k, v in cv_metrics.items() if k != "fold_metrics"}, ensure_ascii=False, indent=2))
+    return cv_metrics
+
+
+def train(args: argparse.Namespace) -> dict[str, object]:
+    if args.data_csv:
+        return cross_validate(args)
+    if not args.train_csv or not args.valid_csv:
+        raise ValueError("Use --data-csv for k-fold cross-validation, or provide both --train-csv and --valid-csv.")
+    train_df = read_text_label_csv(args.train_csv, args.text_col, args.label_col, args.encoding)
+    valid_df = read_text_label_csv(args.valid_csv, args.text_col, args.label_col, args.encoding)
+    return train_once(args, train_df, valid_df, Path(args.output_dir), args.seed)
 
 
 def main() -> int:
