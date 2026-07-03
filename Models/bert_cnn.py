@@ -156,6 +156,56 @@ def train_once(args: argparse.Namespace, train_df, valid_df, output_dir: Path, s
     return best_metrics
 
 
+def train_final(args: argparse.Namespace, train_df, output_dir: Path, seed: int) -> dict[str, object]:
+    set_seed(seed)
+    device = get_device(args.device)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    kernel_sizes = parse_kernel_sizes(args.kernel_sizes)
+
+    encoder = fit_label_encoder(train_df[args.label_col])
+    y_train = encoder.transform(train_df[args.label_col])
+    tokenizer = AutoTokenizer.from_pretrained(args.bert_model)
+    train_loader = DataLoader(
+        BertCnnDataset(train_df[args.text_col], y_train, tokenizer, args.max_len),
+        batch_size=args.batch_size,
+        shuffle=True,
+    )
+
+    model = BertCNN(args.bert_model, len(encoder.classes_), args.num_filters, kernel_sizes, args.dropout).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    total_steps = max(1, len(train_loader) * args.epochs)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=int(total_steps * args.warmup_ratio),
+        num_training_steps=total_steps,
+    )
+    criterion = nn.CrossEntropyLoss()
+
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        total_loss = 0.0
+        for batch in train_loader:
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
+            optimizer.zero_grad()
+            loss = criterion(model(input_ids, attention_mask), labels)
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            total_loss += loss.item()
+        print(f"epoch={epoch} train_loss={total_loss / max(1, len(train_loader)):.4f}")
+
+    torch.save(model.state_dict(), output_dir / "best_model.pt")
+    tokenizer.save_pretrained(output_dir / "tokenizer")
+    save_label_encoder(encoder, output_dir)
+    config = vars(args).copy()
+    config.update({"model_type": "bert_cnn", "num_classes": len(encoder.classes_), "training_mode": "final_train"})
+    with (output_dir / "config.json").open("w", encoding="utf-8") as file:
+        json.dump(config, file, ensure_ascii=False, indent=2)
+    return {"train_rows": len(train_df)}
+
+
 def cross_validate(args: argparse.Namespace) -> dict[str, object]:
     data_df = read_text_label_csv(args.data_csv, args.text_col, args.label_col, args.encoding)
     output_dir = Path(args.output_dir)
@@ -188,9 +238,11 @@ def cross_validate(args: argparse.Namespace) -> dict[str, object]:
 def train(args: argparse.Namespace) -> dict[str, object]:
     if args.data_csv:
         return cross_validate(args)
-    if not args.train_csv or not args.valid_csv:
-        raise ValueError("Use --data-csv for k-fold cross-validation, or provide both --train-csv and --valid-csv.")
+    if not args.train_csv:
+        raise ValueError("Use --data-csv for k-fold cross-validation, or provide --train-csv for final training.")
     train_df = read_text_label_csv(args.train_csv, args.text_col, args.label_col, args.encoding)
+    if not args.valid_csv:
+        return train_final(args, train_df, Path(args.output_dir), args.seed)
     valid_df = read_text_label_csv(args.valid_csv, args.text_col, args.label_col, args.encoding)
     return train_once(args, train_df, valid_df, Path(args.output_dir), args.seed)
 
