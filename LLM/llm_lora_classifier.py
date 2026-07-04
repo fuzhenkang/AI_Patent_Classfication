@@ -78,6 +78,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--trust-remote-code", action="store_true")
     parser.add_argument("--torch-dtype", default=None, choices=["auto", "float16", "bfloat16", "float32"])
+    parser.add_argument("--load-in-4bit", action="store_true", help="Load base model with bitsandbytes 4-bit quantization.")
+    parser.add_argument("--load-in-8bit", action="store_true", help="Load base model with bitsandbytes 8-bit quantization.")
+    parser.add_argument("--bnb-4bit-quant-type", default="nf4", choices=["nf4", "fp4"])
+    parser.add_argument("--bnb-4bit-compute-dtype", default="float16", choices=["float16", "bfloat16", "float32"])
+    parser.add_argument("--bnb-4bit-use-double-quant", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
@@ -99,6 +104,7 @@ def apply_model_defaults(args: argparse.Namespace) -> argparse.Namespace:
     if args.torch_dtype is None:
         args.torch_dtype = config.torch_dtype
     args.trust_remote_code = bool(args.trust_remote_code or config.trust_remote_code)
+    args.recommend_quantization = config.recommend_quantization
     return args
 
 
@@ -107,7 +113,7 @@ def parse_target_modules(value: str) -> list[str]:
 
 
 def build_model(args: argparse.Namespace, label_names: list[str]):
-    from peft import LoraConfig, TaskType, get_peft_model
+    from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 
     id2label = {idx: str(label) for idx, label in enumerate(label_names)}
     label2id = {str(label): idx for idx, label in enumerate(label_names)}
@@ -124,12 +130,38 @@ def build_model(args: argparse.Namespace, label_names: list[str]):
             "float32": torch.float32,
         }
         model_kwargs["torch_dtype"] = dtype_map[args.torch_dtype]
+
+    if args.load_in_4bit and args.load_in_8bit:
+        raise ValueError("Use only one of --load-in-4bit or --load-in-8bit.")
+
+    if args.load_in_4bit or args.load_in_8bit:
+        from transformers import BitsAndBytesConfig
+
+        compute_dtype_map = {
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "float32": torch.float32,
+        }
+        if args.load_in_4bit:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type=args.bnb_4bit_quant_type,
+                bnb_4bit_compute_dtype=compute_dtype_map[args.bnb_4bit_compute_dtype],
+                bnb_4bit_use_double_quant=args.bnb_4bit_use_double_quant,
+            )
+        else:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+
+        model_kwargs["device_map"] = "auto"
     model = AutoModelForSequenceClassification.from_pretrained(
         args.base_model,
         **model_kwargs,
     )
     if getattr(model.config, "pad_token_id", None) is None and getattr(model.config, "eos_token_id", None) is not None:
         model.config.pad_token_id = model.config.eos_token_id
+    if args.load_in_4bit or args.load_in_8bit:
+        model = prepare_model_for_kbit_training(model)
+
     lora_config = LoraConfig(
         task_type=TaskType.SEQ_CLS,
         r=args.lora_r,

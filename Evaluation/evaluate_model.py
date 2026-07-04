@@ -149,12 +149,34 @@ def evaluate_lora_sequence_classifier(config: dict[str, object], model_dir: Path
     label_names = [str(label) for label in label_encoder.classes_]
     id2label = {idx: label for idx, label in enumerate(label_names)}
     label2id = {label: idx for idx, label in enumerate(label_names)}
+    model_kwargs = {
+        "num_labels": len(label_names),
+        "id2label": id2label,
+        "label2id": label2id,
+        "trust_remote_code": bool(config.get("trust_remote_code", False)),
+    }
+    if config.get("load_in_4bit") or config.get("load_in_8bit"):
+        from transformers import BitsAndBytesConfig
+
+        compute_dtype_map = {
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "float32": torch.float32,
+        }
+        if config.get("load_in_4bit"):
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type=str(config.get("bnb_4bit_quant_type", "nf4")),
+                bnb_4bit_compute_dtype=compute_dtype_map[str(config.get("bnb_4bit_compute_dtype", "float16"))],
+                bnb_4bit_use_double_quant=bool(config.get("bnb_4bit_use_double_quant", False)),
+            )
+        else:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+        model_kwargs["device_map"] = "auto"
+
     base_model = AutoModelForSequenceClassification.from_pretrained(
         str(config["base_model"]),
-        num_labels=len(label_names),
-        id2label=id2label,
-        label2id=label2id,
-        trust_remote_code=bool(config.get("trust_remote_code", False)),
+        **model_kwargs,
     )
     if getattr(base_model.config, "pad_token_id", None) is None and getattr(base_model.config, "eos_token_id", None) is not None:
         base_model.config.pad_token_id = base_model.config.eos_token_id

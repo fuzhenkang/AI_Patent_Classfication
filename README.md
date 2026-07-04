@@ -199,6 +199,30 @@ python LLM\llm_lora_classifier.py `
 
 如果默认模型不适合当前环境，可以用 `--base-model` 覆盖；如果 LoRA 目标模块不匹配，可以用 `--lora-target-modules` 覆盖。例如 Qwen/LLaMA/Mistral 常用 `q_proj,v_proj`，GLM 常用 `query_key_value`，Baichuan2 常用 `W_pack`。
 
+对于 Mistral、Baichuan、GLM 等 7B/9B 级模型，建议启用 4bit QLoRA 以降低显存占用：
+
+```powershell
+python LLM\llm_lora_classifier.py `
+  --model-key mistral `
+  --data-csv data\split\train_cv.csv `
+  --output-dir outputs\llm_lora\mistral_qlora `
+  --text-col text `
+  --label-col label `
+  --load-in-4bit `
+  --bnb-4bit-quant-type nf4 `
+  --bnb-4bit-compute-dtype float16 `
+  --batch-size 2 `
+  --epochs 3
+```
+
+也可以使用 8bit 量化：
+
+```powershell
+--load-in-8bit
+```
+
+小模型如 `chinese_roberta`、`qwen` 默认配置通常可以不量化；显存不足时再开启 `--load-in-4bit`。
+
 基于 10 折交叉验证的 Optuna 寻优：
 
 ```powershell

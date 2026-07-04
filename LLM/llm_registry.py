@@ -15,6 +15,7 @@ class LLMConfig:
     lr: float
     trust_remote_code: bool = False
     torch_dtype: str = "auto"
+    recommend_quantization: bool = False
 
 
 MODEL_CONFIGS: dict[str, LLMConfig] = {
@@ -50,6 +51,7 @@ MODEL_CONFIGS: dict[str, LLMConfig] = {
         batch_size=2,
         lr=2e-5,
         trust_remote_code=True,
+        recommend_quantization=True,
     ),
     "mistral": LLMConfig(
         model_key="mistral",
@@ -58,6 +60,7 @@ MODEL_CONFIGS: dict[str, LLMConfig] = {
         max_len=256,
         batch_size=2,
         lr=2e-5,
+        recommend_quantization=True,
     ),
     "baichuan": LLMConfig(
         model_key="baichuan",
@@ -67,6 +70,7 @@ MODEL_CONFIGS: dict[str, LLMConfig] = {
         batch_size=2,
         lr=2e-5,
         trust_remote_code=True,
+        recommend_quantization=True,
     ),
 }
 
