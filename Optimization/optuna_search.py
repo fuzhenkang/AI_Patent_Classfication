@@ -1,4 +1,4 @@
-"""Run Optuna hyperparameter search for patent text classification models."""
+﻿"""Run Optuna hyperparameter search for patent text classification models."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import optuna
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from LLM.llm_lora_classifier import train as train_llm_lora  # noqa: E402
+from LLM.llm_classifier import train as train_llm_lora  # noqa: E402
 from LLM.llm_registry import MODEL_CONFIGS  # noqa: E402
 from Models.bert_cnn import train as train_bert_cnn  # noqa: E402
 from Models.word2vec_cnn import train as train_word2vec_cnn  # noqa: E402
@@ -187,3 +187,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

@@ -1,4 +1,4 @@
-"""Evaluate a trained patent text classification model on a held-out CSV file."""
+﻿"""Evaluate a trained patent text classification model on a held-out CSV file."""
 
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ def evaluate_lora_sequence_classifier(config: dict[str, object], model_dir: Path
     from peft import PeftModel
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    from LLM.llm_lora_classifier import SequenceClassificationDataset
+    from LLM.llm_classifier import SequenceClassificationDataset
 
     label_encoder = load_label_encoder(model_dir)
     tokenizer_path = model_dir / "tokenizer"
@@ -239,3 +239,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

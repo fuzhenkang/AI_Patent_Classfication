@@ -12,7 +12,7 @@ Models/word2vec_cnn.py                  # Word2Vec + CNN
 Models/word2vec_textcnn.py              # Word2Vec + TextCNN
 Models/bert_cnn.py                      # BERT + CNN
 Models/common.py                        # 公共数据、指标、标签编码和交叉验证工具
-LLM/llm_lora_classifier.py              # AutoModelForSequenceClassification + LoRA
+LLM/llm_classifier.py                   # AutoModelForSequenceClassification + LoRA
 LLM/llm_registry.py                     # LLaMA/Qwen/GLM/Mistral/Baichuan 配置注册表
 Optimization/optuna_search.py           # 基于训练集 10 折交叉验证均值的 Optuna 参数寻优
 FinalTrain/train_best_model.py          # 使用最优参数在完整训练集上重训最终模型
@@ -182,7 +182,7 @@ chinese_roberta
 训练集 10 折交叉验证：
 
 ```powershell
-python LLM\llm_lora_classifier.py `
+python LLM\llm_classifier.py `
   --model-key qwen `
   --data-csv data\split\train_cv.csv `
   --output-dir outputs\llm_lora\qwen `
@@ -202,7 +202,7 @@ python LLM\llm_lora_classifier.py `
 对于 Mistral、Baichuan、GLM 等 7B/9B 级模型，建议启用 4bit QLoRA 以降低显存占用：
 
 ```powershell
-python LLM\llm_lora_classifier.py `
+python LLM\llm_classifier.py `
   --model-key mistral `
   --data-csv data\split\train_cv.csv `
   --output-dir outputs\llm_lora\mistral_qlora `
@@ -239,7 +239,7 @@ python Optimization\optuna_search.py `
 在完整训练集上重训最终 LoRA 分类模型：
 
 ```powershell
-python LLM\llm_lora_classifier.py `
+python LLM\llm_classifier.py `
   --model-key qwen `
   --train-csv data\split\train.csv `
   --output-dir outputs\final\qwen_lora `

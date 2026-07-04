@@ -1,4 +1,4 @@
-"""Retrain the selected model on the full training set using Optuna best parameters."""
+﻿"""Retrain the selected model on the full training set using Optuna best parameters."""
 
 from __future__ import annotations
 
@@ -114,7 +114,7 @@ def main() -> int:
     elif args.model_type == "bert_cnn":
         from Models.bert_cnn import train
     else:
-        from LLM.llm_lora_classifier import train
+        from LLM.llm_classifier import train
 
     train(final_args)
     print(f"Final model saved to: {args.output_dir}")
@@ -123,3 +123,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
