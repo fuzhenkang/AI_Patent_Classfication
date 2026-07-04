@@ -309,3 +309,117 @@ outputs/evaluation/<model_name>/predictions.csv
 -> FinalTrain/train_best_model.py
 -> Evaluation/evaluate_model.py
 ```
+
+## 8. Prompt next-token 大语言模型分类
+
+如果需要采用“Prompt + 预测下一个 token”的范式，可以使用 `PromptClassification/` 下的独立流程。该流程不使用交叉验证，而是将数据划分为训练集、验证集和测试集；训练集用于参数学习，验证集用于选择最佳 checkpoint，测试集只用于最终评估。
+
+该范式使用 `AutoModelForCausalLM`，输入 Prompt 后取最后一个位置的 logits，并只比较标签词 token，例如默认 `否,是`。损失函数为分类常用的 `CrossEntropyLoss`。
+
+### 8.1 划分训练集、验证集和测试集
+
+```powershell
+python PromptClassification\split_dataset.py `
+  --input data\processed\patents_cleaned.csv `
+  --output-dir data\prompt_split `
+  --label-col label `
+  --train-ratio 0.8 `
+  --valid-ratio 0.1 `
+  --test-ratio 0.1 `
+  --seed 42
+```
+
+输出：
+
+```text
+data/prompt_split/train.csv
+data/prompt_split/valid.csv
+data/prompt_split/test.csv
+data/prompt_split/split_summary.json
+```
+
+### 8.2 量化后 LoRA 微调
+
+```powershell
+python PromptClassification\prompt_classifier.py `
+  --model-key qwen `
+  --base-model Qwen/Qwen2.5-7B-Instruct `
+  --train-csv data\prompt_split\train.csv `
+  --valid-csv data\prompt_split\valid.csv `
+  --output-dir outputs\prompt_llm\qwen_qlora `
+  --text-col text `
+  --label-col label `
+  --tuning-mode qlora `
+  --load-in-4bit `
+  --bnb-4bit-quant-type nf4 `
+  --bnb-4bit-compute-dtype float16 `
+  --lora-r 16 `
+  --lora-alpha 32 `
+  --lora-dropout 0.05 `
+  --batch-size 2 `
+  --max-len 256 `
+  --epochs 3 `
+  --lr 0.00002
+```
+
+### 8.3 rsLoRA、DoRA 和冻结主干训练
+
+只需要切换 `--tuning-mode`：
+
+```powershell
+--tuning-mode rslora
+```
+
+```powershell
+--tuning-mode dora
+```
+
+```powershell
+--tuning-mode head_only
+```
+
+其中 `head_only` 表示冻结大模型主干，只训练输出头参数；在 Prompt next-token 范式中，这相当于只调整语言模型输出层对“否/是”等标签词的打分。
+
+### 8.4 测试集评估
+
+如果要做验证集参数寻优，可以运行：
+
+```powershell
+python PromptClassification\optuna_prompt_search.py `
+  --model-key qwen `
+  --base-model Qwen/Qwen2.5-7B-Instruct `
+  --train-csv data\prompt_split\train.csv `
+  --valid-csv data\prompt_split\valid.csv `
+  --output-dir outputs\prompt_optuna\qwen_qlora `
+  --text-col text `
+  --label-col label `
+  --tuning-mode qlora `
+  --load-in-4bit `
+  --n-trials 10 `
+  --epochs 3
+```
+
+寻优结果会保存到：
+
+```text
+outputs/prompt_optuna/qwen_qlora/best_params.json
+outputs/prompt_optuna/qwen_qlora/optuna_trials.json
+```
+
+如果使用 Optuna，`best_params.json` 中的 `best_model_dir` 就是验证集表现最好的 trial 模型目录。最终测试只使用已经训练并保存好的最佳模型：
+
+```powershell
+python PromptClassification\evaluate_prompt_classifier.py `
+  --model-dir outputs\prompt_llm\qwen_qlora `
+  --test-csv data\prompt_split\test.csv `
+  --output-dir outputs\prompt_llm_eval\qwen_qlora `
+  --text-col text `
+  --label-col label
+```
+
+输出：
+
+```text
+outputs/prompt_llm_eval/qwen_qlora/test_metrics.json
+outputs/prompt_llm_eval/qwen_qlora/predictions.csv
+```
