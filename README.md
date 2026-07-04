@@ -14,11 +14,6 @@ Models/bert_cnn.py                      # BERT + CNN
 Models/common.py                        # 公共数据、指标、标签编码和交叉验证工具
 LLM/llm_lora_classifier.py              # AutoModelForSequenceClassification + LoRA
 LLM/llm_registry.py                     # LLaMA/Qwen/GLM/Mistral/Baichuan 配置注册表
-LLM/qwen_for_classification/finetune.py # Qwen LoRA 分类入口
-LLM/llama_for_classification/finetune.py
-LLM/glm_for_classification/finetune.py
-LLM/mistral_for_classification/finetune.py
-LLM/baichuan_for_classification/finetune.py
 Optimization/optuna_search.py           # 基于训练集 10 折交叉验证均值的 Optuna 参数寻优
 FinalTrain/train_best_model.py          # 使用最优参数在完整训练集上重训最终模型
 Evaluation/evaluate_model.py            # 在独立测试集上评估最终模型
@@ -200,26 +195,6 @@ python LLM\llm_lora_classifier.py `
   --lora-r 8 `
   --lora-alpha 16 `
   --lora-dropout 0.1
-```
-
-也可以使用模型家族入口脚本，例如 Qwen：
-
-```powershell
-python LLM\qwen_for_classification\finetune.py `
-  --data-csv data\split\train_cv.csv `
-  --output-dir outputs\llm_lora\qwen `
-  --text-col text `
-  --label-col label `
-  --cv-folds 10
-```
-
-LLaMA、GLM、Mistral、Baichuan 分别对应：
-
-```powershell
-python LLM\llama_for_classification\finetune.py ...
-python LLM\glm_for_classification\finetune.py ...
-python LLM\mistral_for_classification\finetune.py ...
-python LLM\baichuan_for_classification\finetune.py ...
 ```
 
 如果默认模型不适合当前环境，可以用 `--base-model` 覆盖；如果 LoRA 目标模块不匹配，可以用 `--lora-target-modules` 覆盖。例如 Qwen/LLaMA/Mistral 常用 `q_proj,v_proj`，GLM 常用 `query_key_value`，Baichuan2 常用 `W_pack`。
