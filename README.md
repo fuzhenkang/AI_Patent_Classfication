@@ -75,7 +75,7 @@ stopwords/user_stopwords.txt
 
 ```powershell
 python split_train_test.py \
-  --input data\processed\patents_cleaned.csv v
+  --input data\processed\patents_cleaned.csv \
   --output-dir data\split v
   --label-col label \
   --train-ratio 0.8 \
