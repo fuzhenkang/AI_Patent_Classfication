@@ -1,4 +1,4 @@
-﻿"""Run Optuna hyperparameter search for patent text classification models."""
+"""Run Optuna hyperparameter search for patent text classification models."""
 
 from __future__ import annotations
 
@@ -12,11 +12,12 @@ import optuna
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from models.bert_cnn import train as train_bert_cnn  # noqa: E402
+from models.bert_linear import train as train_bert_linear  # noqa: E402
 from models.word2vec_cnn import train as train_word2vec_cnn  # noqa: E402
 from models.word2vec_textcnn import train as train_word2vec_textcnn  # noqa: E402
 
 
-MODEL_TYPES = ["word2vec_cnn", "word2vec_textcnn", "bert_cnn"]
+MODEL_TYPES = ["word2vec_cnn", "word2vec_textcnn", "bert_cnn", "bert_linear"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,6 +102,28 @@ def build_trial_args(trial: optuna.Trial, args: argparse.Namespace, output_dir: 
             device=args.device,
         )
 
+    if args.model_type == "bert_linear":
+        return SimpleNamespace(
+            data_csv=None,
+            train_csv=args.train_csv,
+            valid_csv=args.valid_csv,
+            output_dir=str(output_dir),
+            text_col=args.text_col,
+            label_col=args.label_col,
+            fold_col="cv_fold",
+            cv_folds=0,
+            encoding=args.encoding,
+            bert_model=args.bert_model,
+            max_len=trial.suggest_categorical("max_len", [128, 256, 384]),
+            dropout=trial.suggest_float("dropout", 0.0, 0.3),
+            batch_size=trial.suggest_categorical("batch_size", [8, 16, 32]),
+            epochs=trial.suggest_int("epochs", 2, 5),
+            lr=trial.suggest_float("lr", 1e-5, 5e-5, log=True),
+            weight_decay=trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True),
+            warmup_ratio=trial.suggest_float("warmup_ratio", 0.0, 0.2),
+            seed=args.seed,
+            device=args.device,
+        )
     raise ValueError(f"Unsupported model type: {args.model_type}")
 
 
@@ -111,6 +134,8 @@ def train_one_model(model_type: str, trial_args: SimpleNamespace) -> dict[str, o
         return train_word2vec_textcnn(trial_args)
     if model_type == "bert_cnn":
         return train_bert_cnn(trial_args)
+    if model_type == "bert_linear":
+        return train_bert_linear(trial_args)
     raise ValueError(f"Unsupported model type: {model_type}")
 
 
