@@ -1,0 +1,232 @@
+"""Train a BERT classifier with the standard linear sequence-classification head."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import torch
+from torch.utils.data import DataLoader
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_linear_schedule_with_warmup
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from models.common import (  # noqa: E402
+    BertCnnDataset,
+    average_metrics,
+    classification_metrics,
+    fit_label_encoder,
+    get_device,
+    read_text_label_csv,
+    save_label_encoder,
+    set_seed,
+    stratified_kfold_indices,
+    write_metrics,
+)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train BERT + linear classification head.")
+    parser.add_argument("--data-csv", help="Full cleaned CSV for stratified k-fold cross-validation.")
+    parser.add_argument("--train-csv", help="Optional explicit training CSV.")
+    parser.add_argument("--valid-csv", help="Optional explicit validation CSV.")
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--text-col", default="text")
+    parser.add_argument("--label-col", default="label")
+    parser.add_argument("--fold-col", default="cv_fold")
+    parser.add_argument("--cv-folds", type=int, default=10)
+    parser.add_argument("--encoding", default="utf-8-sig")
+    parser.add_argument("--bert-model", default="hfl/chinese-roberta-wwm-ext")
+    parser.add_argument("--max-len", type=int, default=256)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--warmup-ratio", type=float, default=0.1)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", default=None)
+    return parser.parse_args()
+
+
+def build_model(bert_model: str, label_names: list[object], dropout: float) -> AutoModelForSequenceClassification:
+    id2label = {idx: str(label) for idx, label in enumerate(label_names)}
+    label2id = {str(label): idx for idx, label in enumerate(label_names)}
+    return AutoModelForSequenceClassification.from_pretrained(
+        bert_model,
+        num_labels=len(label_names),
+        id2label=id2label,
+        label2id=label2id,
+        classifier_dropout=dropout,
+        hidden_dropout_prob=dropout,
+    )
+
+
+def evaluate(model, loader: DataLoader, device: torch.device, label_names: list[str]) -> dict[str, object]:
+    model.eval()
+    y_true: list[int] = []
+    y_pred: list[int] = []
+    with torch.no_grad():
+        for batch in loader:
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
+            logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
+            y_true.extend(labels.cpu().numpy().tolist())
+            y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy().tolist())
+    return classification_metrics(y_true, y_pred, label_names)
+
+
+def _train_loop(args: argparse.Namespace, model, train_loader: DataLoader, valid_loader: DataLoader | None, device: torch.device, label_names: list[str], output_dir: Path) -> dict[str, object]:
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    total_steps = max(1, len(train_loader) * args.epochs)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=int(total_steps * args.warmup_ratio),
+        num_training_steps=total_steps,
+    )
+    best_f1 = -1.0
+    best_metrics: dict[str, object] = {}
+
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        total_loss = 0.0
+        for batch in train_loader:
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
+            optimizer.zero_grad()
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            loss = outputs.loss
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            total_loss += loss.item()
+
+        train_loss = total_loss / max(1, len(train_loader))
+        if valid_loader is None:
+            print(f"epoch={epoch} train_loss={train_loss:.4f}")
+            continue
+
+        metrics = evaluate(model, valid_loader, device, label_names)
+        metrics["train_loss"] = train_loss
+        print(f"epoch={epoch} loss={train_loss:.4f} valid_f1_macro={metrics['f1_macro']:.4f}")
+        if metrics["f1_macro"] > best_f1:
+            best_f1 = float(metrics["f1_macro"])
+            best_metrics = metrics
+            model.save_pretrained(output_dir / "best_model")
+
+    if valid_loader is None:
+        model.save_pretrained(output_dir / "best_model")
+        return {"train_rows": len(train_loader.dataset)}
+    return best_metrics
+
+
+def train_once(args: argparse.Namespace, train_df, valid_df, output_dir: Path, seed: int) -> dict[str, object]:
+    set_seed(seed)
+    device = get_device(args.device)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    encoder = fit_label_encoder(train_df[args.label_col], valid_df[args.label_col])
+    y_train = encoder.transform(train_df[args.label_col])
+    y_valid = encoder.transform(valid_df[args.label_col])
+    label_names = list(encoder.classes_)
+
+    tokenizer = AutoTokenizer.from_pretrained(args.bert_model)
+    train_loader = DataLoader(
+        BertCnnDataset(train_df[args.text_col], y_train, tokenizer, args.max_len),
+        batch_size=args.batch_size,
+        shuffle=True,
+    )
+    valid_loader = DataLoader(
+        BertCnnDataset(valid_df[args.text_col], y_valid, tokenizer, args.max_len),
+        batch_size=args.batch_size,
+    )
+
+    model = build_model(args.bert_model, label_names, args.dropout).to(device)
+    metrics = _train_loop(args, model, train_loader, valid_loader, device, [str(label) for label in label_names], output_dir)
+    tokenizer.save_pretrained(output_dir / "tokenizer")
+    save_label_encoder(encoder, output_dir)
+    config = vars(args).copy()
+    config.update({"model_type": "bert_linear", "num_classes": len(encoder.classes_)})
+    with (output_dir / "config.json").open("w", encoding="utf-8") as file:
+        json.dump(config, file, ensure_ascii=False, indent=2)
+    write_metrics(metrics, output_dir / "valid_metrics.json")
+    return metrics
+
+
+def train_final(args: argparse.Namespace, train_df, output_dir: Path, seed: int) -> dict[str, object]:
+    set_seed(seed)
+    device = get_device(args.device)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    encoder = fit_label_encoder(train_df[args.label_col])
+    y_train = encoder.transform(train_df[args.label_col])
+    label_names = list(encoder.classes_)
+    tokenizer = AutoTokenizer.from_pretrained(args.bert_model)
+    train_loader = DataLoader(
+        BertCnnDataset(train_df[args.text_col], y_train, tokenizer, args.max_len),
+        batch_size=args.batch_size,
+        shuffle=True,
+    )
+
+    model = build_model(args.bert_model, label_names, args.dropout).to(device)
+    metrics = _train_loop(args, model, train_loader, None, device, [str(label) for label in label_names], output_dir)
+    tokenizer.save_pretrained(output_dir / "tokenizer")
+    save_label_encoder(encoder, output_dir)
+    config = vars(args).copy()
+    config.update({"model_type": "bert_linear", "num_classes": len(encoder.classes_), "training_mode": "final_train"})
+    with (output_dir / "config.json").open("w", encoding="utf-8") as file:
+        json.dump(config, file, ensure_ascii=False, indent=2)
+    return metrics
+
+
+def cross_validate(args: argparse.Namespace) -> dict[str, object]:
+    data_df = read_text_label_csv(args.data_csv, args.text_col, args.label_col, args.encoding)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.fold_col in data_df.columns:
+        fold_ids = sorted(data_df[args.fold_col].dropna().unique().tolist())
+        folds = [data_df.index[data_df[args.fold_col] == fold_id].to_numpy() for fold_id in fold_ids]
+    else:
+        folds = stratified_kfold_indices(data_df[args.label_col], n_splits=args.cv_folds, seed=args.seed)
+
+    fold_metrics = []
+    for fold_idx, valid_indices in enumerate(folds):
+        valid_set = set(valid_indices.tolist())
+        train_indices = [idx for idx in data_df.index if idx not in valid_set]
+        train_df = data_df.loc[train_indices].reset_index(drop=True)
+        valid_df = data_df.loc[valid_indices].reset_index(drop=True)
+        print(f"fold={fold_idx + 1}/{len(folds)} train={len(train_df)} valid={len(valid_df)}")
+        metrics = train_once(args, train_df, valid_df, output_dir / f"fold_{fold_idx:02d}", args.seed + fold_idx)
+        fold_metrics.append(metrics)
+
+    cv_metrics = average_metrics(fold_metrics)
+    write_metrics(cv_metrics, output_dir / "cv_metrics.json")
+    with (output_dir / "config.json").open("w", encoding="utf-8") as file:
+        json.dump(vars(args) | {"model_type": "bert_linear", "cv_folds_actual": len(folds)}, file, ensure_ascii=False, indent=2)
+    print(json.dumps({k: v for k, v in cv_metrics.items() if k != "fold_metrics"}, ensure_ascii=False, indent=2))
+    return cv_metrics
+
+
+def train(args: argparse.Namespace) -> dict[str, object]:
+    if args.data_csv:
+        return cross_validate(args)
+    if not args.train_csv:
+        raise ValueError("Use --data-csv for k-fold cross-validation, or provide --train-csv for final training.")
+    train_df = read_text_label_csv(args.train_csv, args.text_col, args.label_col, args.encoding)
+    if not args.valid_csv:
+        return train_final(args, train_df, Path(args.output_dir), args.seed)
+    valid_df = read_text_label_csv(args.valid_csv, args.text_col, args.label_col, args.encoding)
+    return train_once(args, train_df, valid_df, Path(args.output_dir), args.seed)
+
+
+def main() -> int:
+    train(parse_args())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
