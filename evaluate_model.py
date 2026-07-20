@@ -1,4 +1,4 @@
-﻿"""Evaluate a trained patent text classification model on a held-out CSV file."""
+"""Evaluate a trained patent text classification model on a held-out CSV file."""
 
 from __future__ import annotations
 
@@ -134,6 +134,40 @@ def evaluate_bert(config: dict[str, object], model_dir: Path, test_df: pd.DataFr
     return metrics
 
 
+def evaluate_bert_linear(config: dict[str, object], model_dir: Path, test_df: pd.DataFrame, labels: np.ndarray, output_dir: Path, device: torch.device, batch_size: int) -> dict[str, object]:
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+    label_encoder = load_label_encoder(model_dir)
+    tokenizer_path = model_dir / "tokenizer"
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path if tokenizer_path.exists() else str(config["bert_model"]))
+    model_path = model_dir / "best_model"
+    model = AutoModelForSequenceClassification.from_pretrained(model_path if model_path.exists() else str(config["bert_model"]))
+    if not model_path.exists():
+        model.load_state_dict(torch.load(model_dir / "best_model.pt", map_location=device))
+    model.to(device)
+    model.eval()
+
+    dataset = BertCnnDataset(test_df[str(config["text_col"])], labels, tokenizer, int(config["max_len"]))
+    loader = DataLoader(dataset, batch_size=batch_size)
+    y_true: list[int] = []
+    y_pred: list[int] = []
+
+    with torch.no_grad():
+        for batch in loader:
+            logits = model(
+                input_ids=batch["input_ids"].to(device),
+                attention_mask=batch["attention_mask"].to(device),
+            ).logits
+            y_true.extend(batch["labels"].numpy().tolist())
+            y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy().tolist())
+
+    metrics = classification_metrics(y_true, y_pred, list(label_encoder.classes_))
+    predictions = test_df.copy()
+    predictions["pred_label"] = label_encoder.inverse_transform(y_pred)
+    predictions.to_csv(output_dir / "predictions.csv", index=False, encoding="utf-8-sig")
+    return metrics
+
+
 def main() -> int:
     args = parse_args()
     model_dir = Path(args.model_dir)
@@ -158,6 +192,8 @@ def main() -> int:
         metrics = evaluate_word2vec(config, model_dir, test_df, labels, output_dir, device, batch_size)
     elif model_type == "bert_cnn":
         metrics = evaluate_bert(config, model_dir, test_df, labels, output_dir, device, batch_size)
+    elif model_type == "bert_linear":
+        metrics = evaluate_bert_linear(config, model_dir, test_df, labels, output_dir, device, batch_size)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
