@@ -1,26 +1,22 @@
-# AI Patent Classification
+﻿# AI Patent Classification
 
-本仓库用于根据专利标题和摘要识别 AI 专利，实验流程为：先按 `8:2` 划分训练集和独立测试集，再在训练集内部进行 10 折交叉验证和 Optuna 参数寻优，随后使用最优参数在完整训练集上重训最终模型，最后在独立测试集上评估。
+本仓库用于根据专利标题、摘要等文本信息识别 AI 专利。当前项目已整理为简洁结构：不再包含 `LLM` 和 `PromptClassification`，主要保留文本预处理、数据划分、传统深度学习分类模型、Optuna 寻优、最终训练和测试集评估流程。
 
-## 目录结构
+## 项目结构
 
 ```text
-Preprocessing/preprocess_patents.py      # 标题和摘要预处理
-DataSplit/split_train_test.py           # 按 8:2 分层划分训练集和测试集
-DataSplit/create_cv_folds.py            # 对训练集生成分层 10 折 cv_fold 标记
-Models/word2vec_cnn.py                  # Word2Vec + CNN
-Models/word2vec_textcnn.py              # Word2Vec + TextCNN
-Models/bert_cnn.py                      # BERT + CNN
-Models/common.py                        # 公共数据、指标、标签编码和交叉验证工具
-LLM/llm_classifier.py                   # AutoModelForSequenceClassification + LoRA
-LLM/llm_registry.py                     # LLaMA/Qwen/GLM/Mistral/Baichuan 配置注册表
-Optimization/optuna_search.py           # 基于训练集 10 折交叉验证均值的 Optuna 参数寻优
-FinalTrain/train_best_model.py          # 使用最优参数在完整训练集上重训最终模型
-Evaluation/evaluate_model.py            # 在独立测试集上评估最终模型
-data/stopwords/                         # 哈工大停用词表和用户补充词典
+preprocess_patents.py     文本预处理：清洗标题和摘要、去停用词、拼接文本、统计文本长度
+split_train_test.py       按类别比例划分 train.csv、valid.csv、test.csv
+optuna_search.py          基于训练集和验证集进行 Optuna 参数寻优
+train_best_model.py       使用 Optuna 最优参数重新训练最终模型
+evaluate_model.py         在测试集上评估最终模型
+requirements.txt          Python 依赖
+models/                   Word2Vec+CNN、Word2Vec+TextCNN、BERT+CNN 及公共工具
+stopwords/                哈工大停用词、专利固定表述和用户补充停用词
+data/                     预留数据目录，用于后续存放原始数据、清洗数据和划分数据
 ```
 
-## 环境安装
+## 安装依赖
 
 ```powershell
 pip install -r requirements.txt
@@ -30,30 +26,61 @@ pip install -r requirements.txt
 
 ## 数据格式
 
-原始 CSV 至少包含 `PN`、`title`、`abstract` 三列。模型训练前，清洗后的数据还需要包含标签列，默认列名为 `label`。
+原始 CSV 至少包含以下列：
+
+```csv
+PN,title,abstract,label
+CNxxxx,一种图像识别方法,本发明公开了一种基于神经网络的图像识别方法,1
+CNyyyy,一种机械连接装置,本发明涉及机械零件连接结构,0
+```
+
+其中：
+
+```text
+PN        专利申请号
+title     专利标题
+abstract  专利摘要
+label     分类标签，默认 0/1，也可以是文字标签
+```
 
 ## 1. 文本预处理
 
 ```powershell
-python Preprocessing\preprocess_patents.py `
+python preprocess_patents.py `
   --input data\raw\patents.csv `
   --output data\processed\patents_cleaned.csv `
-  --stats-output outputs\text_length_stats.csv `
+  --stats-output data\processed\text_length_stats.csv `
   --keep-original-columns
 ```
 
-预处理会生成 `clean_title`、`clean_abstract`、`text`、`text_len_chars`、`text_len_no_space` 等字段。
+预处理会生成：
 
-## 2. 按 8:2 划分训练集和测试集
+```text
+clean_title
+clean_abstract
+text
+text_len_chars
+text_len_no_space
+```
 
-测试集只在最终模型确定后使用，不参与 10 折交叉验证和 Optuna 寻优。
+默认停用词文件位于：
+
+```text
+stopwords/hit_stopwords.txt
+stopwords/patent_phrases.txt
+stopwords/user_stopwords.txt
+```
+
+## 2. 划分训练集、验证集和测试集
 
 ```powershell
-python DataSplit\split_train_test.py `
+python split_train_test.py `
   --input data\processed\patents_cleaned.csv `
   --output-dir data\split `
   --label-col label `
   --train-ratio 0.8 `
+  --valid-ratio 0.1 `
+  --test-ratio 0.1 `
   --seed 42
 ```
 
@@ -61,60 +88,52 @@ python DataSplit\split_train_test.py `
 
 ```text
 data/split/train.csv
+data/split/valid.csv
 data/split/test.csv
-data/split/train_test_summary.csv
+data/split/split_summary.csv
 ```
 
-## 3. 对训练集生成 10 折交叉验证标记
+当前项目采用固定训练集、验证集和测试集流程，不再使用交叉验证训练。
+
+## 3. Optuna 参数寻优
+
+以 Word2Vec + CNN 为例：
 
 ```powershell
-python DataSplit\create_cv_folds.py `
-  --input data\split\train.csv `
-  --output data\split\train_cv.csv `
-  --label-col label `
-  --n-splits 10 `
-  --seed 42
-```
-
-在训练集内部，脚本按照类别比例划分 10 个规模相近且互不重叠的子集。每轮选择 9 折训练、1 折验证，重复 10 次，并使用 10 次验证结果均值作为该组参数的验证性能。
-
-## 4. Optuna 参数寻优
-
-Optuna 默认最大化训练集 10 折交叉验证的 `f1_macro` 均值。
-
-```powershell
-python Optimization\optuna_search.py `
+python optuna_search.py `
   --model-type word2vec_cnn `
-  --data-csv data\split\train_cv.csv `
+  --train-csv data\split\train.csv `
+  --valid-csv data\split\valid.csv `
   --output-dir outputs\optuna\word2vec_cnn `
   --text-col text `
   --label-col label `
-  --cv-folds 10 `
   --n-trials 20
 ```
 
-其他模型：
+Word2Vec + TextCNN：
 
 ```powershell
-python Optimization\optuna_search.py `
+python optuna_search.py `
   --model-type word2vec_textcnn `
-  --data-csv data\split\train_cv.csv `
+  --train-csv data\split\train.csv `
+  --valid-csv data\split\valid.csv `
   --output-dir outputs\optuna\word2vec_textcnn `
   --text-col text `
   --label-col label `
-  --cv-folds 10 `
   --n-trials 20
 ```
 
+BERT + CNN：
+
 ```powershell
-python Optimization\optuna_search.py `
+python optuna_search.py `
   --model-type bert_cnn `
-  --data-csv data\split\train_cv.csv `
+  --train-csv data\split\train.csv `
+  --valid-csv data\split\valid.csv `
   --output-dir outputs\optuna\bert_cnn `
   --text-col text `
   --label-col label `
   --bert-model hfl/chinese-roberta-wwm-ext `
-  --cv-folds 10 `
   --n-trials 10
 ```
 
@@ -124,15 +143,14 @@ python Optimization\optuna_search.py `
 outputs/optuna/<model_name>/best_params.json
 outputs/optuna/<model_name>/optuna_trials.csv
 outputs/optuna/<model_name>/trial_0000/
-...
 ```
 
-## 5. 使用最优参数重训最终模型
+## 4. 使用最优参数训练最终模型
 
-以 `Word2Vec + CNN` 为例，读取 Optuna 的最佳参数，在完整 80% 训练集上重训最终模型：
+Word2Vec + CNN：
 
 ```powershell
-python FinalTrain\train_best_model.py `
+python train_best_model.py `
   --model-type word2vec_cnn `
   --best-params outputs\optuna\word2vec_cnn\best_params.json `
   --train-csv data\split\train.csv `
@@ -141,10 +159,10 @@ python FinalTrain\train_best_model.py `
   --label-col label
 ```
 
-`Word2Vec + TextCNN`：
+Word2Vec + TextCNN：
 
 ```powershell
-python FinalTrain\train_best_model.py `
+python train_best_model.py `
   --model-type word2vec_textcnn `
   --best-params outputs\optuna\word2vec_textcnn\best_params.json `
   --train-csv data\split\train.csv `
@@ -153,10 +171,10 @@ python FinalTrain\train_best_model.py `
   --label-col label
 ```
 
-`BERT + CNN`：
+BERT + CNN：
 
 ```powershell
-python FinalTrain\train_best_model.py `
+python train_best_model.py `
   --model-type bert_cnn `
   --best-params outputs\optuna\bert_cnn\best_params.json `
   --train-csv data\split\train.csv `
@@ -166,112 +184,13 @@ python FinalTrain\train_best_model.py `
   --bert-model hfl/chinese-roberta-wwm-ext
 ```
 
-## 6. 基于大语言模型的 LoRA 微调分类
-
-也可以直接使用 Hugging Face `AutoModelForSequenceClassification` 结合 LoRA 进行参数高效微调。当前支持通过注册表切换以下模型家族：
-
-```text
-llama
-qwen
-glm
-mistral
-baichuan
-chinese_roberta
-```
-
-训练集 10 折交叉验证：
+## 5. 测试集评估
 
 ```powershell
-python LLM\llm_classifier.py `
-  --model-key qwen `
-  --data-csv data\split\train_cv.csv `
-  --output-dir outputs\llm_lora\qwen `
-  --text-col text `
-  --label-col label `
-  --max-len 256 `
-  --batch-size 4 `
-  --epochs 3 `
-  --lr 0.00002 `
-  --lora-r 8 `
-  --lora-alpha 16 `
-  --lora-dropout 0.1
-```
-
-如果默认模型不适合当前环境，可以用 `--base-model` 覆盖；如果 LoRA 目标模块不匹配，可以用 `--lora-target-modules` 覆盖。例如 Qwen/LLaMA/Mistral 常用 `q_proj,v_proj`，GLM 常用 `query_key_value`，Baichuan2 常用 `W_pack`。
-
-对于 Mistral、Baichuan、GLM 等 7B/9B 级模型，建议启用 4bit QLoRA 以降低显存占用：
-
-```powershell
-python LLM\llm_classifier.py `
-  --model-key mistral `
-  --data-csv data\split\train_cv.csv `
-  --output-dir outputs\llm_lora\mistral_qlora `
-  --text-col text `
-  --label-col label `
-  --load-in-4bit `
-  --bnb-4bit-quant-type nf4 `
-  --bnb-4bit-compute-dtype float16 `
-  --batch-size 2 `
-  --epochs 3
-```
-
-也可以使用 8bit 量化：
-
-```powershell
---load-in-8bit
-```
-
-小模型如 `chinese_roberta`、`qwen` 默认配置通常可以不量化；显存不足时再开启 `--load-in-4bit`。
-
-基于 10 折交叉验证的 Optuna 寻优：
-
-```powershell
-python Optimization\optuna_search.py `
-  --model-type qwen `
-  --data-csv data\split\train_cv.csv `
-  --output-dir outputs\optuna\qwen_lora `
-  --text-col text `
-  --label-col label `
-  --cv-folds 10 `
-  --n-trials 10
-```
-
-在完整训练集上重训最终 LoRA 分类模型：
-
-```powershell
-python LLM\llm_classifier.py `
-  --model-key qwen `
-  --train-csv data\split\train.csv `
-  --output-dir outputs\final\qwen_lora `
-  --text-col text `
-  --label-col label `
-  --max-len 256 `
-  --batch-size 4 `
-  --epochs 3 `
-  --lr 0.00002 `
-  --lora-r 8 `
-  --lora-alpha 16 `
-  --lora-dropout 0.1
-```
-
-## 7. 在测试集上评估最终模型
-
-```powershell
-python Evaluation\evaluate_model.py `
+python evaluate_model.py `
   --model-dir outputs\final\word2vec_cnn `
   --test-csv data\split\test.csv `
   --output-dir outputs\evaluation\word2vec_cnn `
-  --text-col text `
-  --label-col label
-```
-
-LoRA 分类模型测试：
-
-```powershell
-python Evaluation\evaluate_model.py `
-  --model-dir outputs\final\qwen_lora `
-  --test-csv data\split\test.csv `
-  --output-dir outputs\evaluation\qwen_lora `
   --text-col text `
   --label-col label
 ```
@@ -283,143 +202,10 @@ outputs/evaluation/<model_name>/test_metrics.json
 outputs/evaluation/<model_name>/predictions.csv
 ```
 
-## 常用默认参数
-
-| 参数 | Word2Vec + CNN | Word2Vec + TextCNN | BERT + CNN |
-| --- | --- | --- | --- |
-| 最大文本长度 | 256 | 256 | 256 |
-| 卷积核尺寸 | 3 | 3,4,5 | 3,4,5 |
-| 每种尺寸卷积核个数 | 128 | 128 | 128 |
-| batch size | 64 | 64 | 16 |
-| epochs | 10 | 10 | 3 |
-| learning rate | 0.001 | 0.001 | 0.00002 |
-| dropout | 0.5 | 0.5 | 0.3 |
-| 激活函数 | ReLU | ReLU | ReLU |
-| 损失函数 | CrossEntropyLoss | CrossEntropyLoss | CrossEntropyLoss |
-| 优化器 | AdamW | AdamW | AdamW |
-
-## 推荐实验流程
+## 支持的模型
 
 ```text
-原始专利 CSV
--> Preprocessing/preprocess_patents.py
--> DataSplit/split_train_test.py
--> DataSplit/create_cv_folds.py
--> Optimization/optuna_search.py
--> FinalTrain/train_best_model.py
--> Evaluation/evaluate_model.py
-```
-
-## 8. Prompt next-token 大语言模型分类
-
-如果需要采用“Prompt + 预测下一个 token”的范式，可以使用 `PromptClassification/` 下的独立流程。该流程不使用交叉验证，而是将数据划分为训练集、验证集和测试集；训练集用于参数学习，验证集用于选择最佳 checkpoint，测试集只用于最终评估。
-
-该范式使用 `AutoModelForCausalLM`，输入 Prompt 后取最后一个位置的 logits，并只比较标签词 token，例如默认 `否,是`。损失函数为分类常用的 `CrossEntropyLoss`。
-
-### 8.1 划分训练集、验证集和测试集
-
-```powershell
-python PromptClassification\split_dataset.py `
-  --input data\processed\patents_cleaned.csv `
-  --output-dir data\prompt_split `
-  --label-col label `
-  --train-ratio 0.8 `
-  --valid-ratio 0.1 `
-  --test-ratio 0.1 `
-  --seed 42
-```
-
-输出：
-
-```text
-data/prompt_split/train.csv
-data/prompt_split/valid.csv
-data/prompt_split/test.csv
-data/prompt_split/split_summary.json
-```
-
-### 8.2 量化后 LoRA 微调
-
-```powershell
-python PromptClassification\prompt_classifier.py `
-  --model-key qwen `
-  --base-model Qwen/Qwen2.5-7B-Instruct `
-  --train-csv data\prompt_split\train.csv `
-  --valid-csv data\prompt_split\valid.csv `
-  --output-dir outputs\prompt_llm\qwen_qlora `
-  --text-col text `
-  --label-col label `
-  --tuning-mode qlora `
-  --load-in-4bit `
-  --bnb-4bit-quant-type nf4 `
-  --bnb-4bit-compute-dtype float16 `
-  --lora-r 16 `
-  --lora-alpha 32 `
-  --lora-dropout 0.05 `
-  --batch-size 2 `
-  --max-len 256 `
-  --epochs 3 `
-  --lr 0.00002
-```
-
-### 8.3 rsLoRA、DoRA 和冻结主干训练
-
-只需要切换 `--tuning-mode`：
-
-```powershell
---tuning-mode rslora
-```
-
-```powershell
---tuning-mode dora
-```
-
-```powershell
---tuning-mode head_only
-```
-
-其中 `head_only` 表示冻结大模型主干，只训练输出头参数；在 Prompt next-token 范式中，这相当于只调整语言模型输出层对“否/是”等标签词的打分。
-
-### 8.4 测试集评估
-
-如果要做验证集参数寻优，可以运行：
-
-```powershell
-python PromptClassification\optuna_prompt_search.py `
-  --model-key qwen `
-  --base-model Qwen/Qwen2.5-7B-Instruct `
-  --train-csv data\prompt_split\train.csv `
-  --valid-csv data\prompt_split\valid.csv `
-  --output-dir outputs\prompt_optuna\qwen_qlora `
-  --text-col text `
-  --label-col label `
-  --tuning-mode qlora `
-  --load-in-4bit `
-  --n-trials 10 `
-  --epochs 3
-```
-
-寻优结果会保存到：
-
-```text
-outputs/prompt_optuna/qwen_qlora/best_params.json
-outputs/prompt_optuna/qwen_qlora/optuna_trials.json
-```
-
-如果使用 Optuna，`best_params.json` 中的 `best_model_dir` 就是验证集表现最好的 trial 模型目录。最终测试只使用已经训练并保存好的最佳模型：
-
-```powershell
-python PromptClassification\evaluate_prompt_classifier.py `
-  --model-dir outputs\prompt_llm\qwen_qlora `
-  --test-csv data\prompt_split\test.csv `
-  --output-dir outputs\prompt_llm_eval\qwen_qlora `
-  --text-col text `
-  --label-col label
-```
-
-输出：
-
-```text
-outputs/prompt_llm_eval/qwen_qlora/test_metrics.json
-outputs/prompt_llm_eval/qwen_qlora/predictions.csv
+models/word2vec_cnn.py      Word2Vec + CNN
+models/word2vec_textcnn.py  Word2Vec + TextCNN
+models/bert_cnn.py          BERT + CNN
 ```

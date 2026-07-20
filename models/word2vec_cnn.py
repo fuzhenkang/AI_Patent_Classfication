@@ -1,4 +1,4 @@
-"""Train a Word2Vec + CNN classifier for cleaned patent text."""
+﻿"""Train a Word2Vec + CNN classifier for cleaned patent text."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from gensim.models import Word2Vec
 from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from Models.common import (  # noqa: E402
+from models.common import (  # noqa: E402
     PAD_TOKEN,
     TextDataset,
     average_metrics,

@@ -1,4 +1,4 @@
-"""Train a BERT + CNN classifier for cleaned patent text."""
+﻿"""Train a Word2Vec + TextCNN classifier for cleaned patent text."""
 
 from __future__ import annotations
 
@@ -7,49 +7,53 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
+from gensim.models import Word2Vec
 from torch.utils.data import DataLoader
-from transformers import AutoModel, AutoTokenizer, get_linear_schedule_with_warmup
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from Models.common import (  # noqa: E402
-    BertCnnDataset,
+from models.common import (  # noqa: E402
+    PAD_TOKEN,
+    TextDataset,
     average_metrics,
+    build_vocab,
     classification_metrics,
     fit_label_encoder,
     get_device,
     read_text_label_csv,
     save_label_encoder,
+    save_vocab,
     set_seed,
     stratified_kfold_indices,
+    texts_to_tokens,
     write_metrics,
 )
 
 
-class BertCNN(nn.Module):
-    def __init__(self, bert_model_name: str, num_classes: int, num_filters: int, kernel_sizes: list[int], dropout: float):
+class Word2VecTextCNN(nn.Module):
+    def __init__(self, embedding_matrix: np.ndarray, num_classes: int, num_filters: int, kernel_sizes: list[int], dropout: float):
         super().__init__()
-        self.bert = AutoModel.from_pretrained(bert_model_name)
-        hidden_size = self.bert.config.hidden_size
+        embeddings = torch.tensor(embedding_matrix, dtype=torch.float32)
+        self.embedding = nn.Embedding.from_pretrained(embeddings, freeze=False, padding_idx=0)
         self.convs = nn.ModuleList(
-            [nn.Conv1d(hidden_size, num_filters, kernel_size) for kernel_size in kernel_sizes]
+            [nn.Conv1d(embeddings.shape[1], num_filters, kernel_size) for kernel_size in kernel_sizes]
         )
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(num_filters * len(kernel_sizes), num_classes)
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        sequence_output = outputs.last_hidden_state.transpose(1, 2)
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        embedded = self.embedding(input_ids).transpose(1, 2)
         pooled = []
         for conv in self.convs:
-            features = torch.relu(conv(sequence_output))
+            features = torch.relu(conv(embedded))
             pooled.append(torch.max(features, dim=2).values)
         return self.classifier(self.dropout(torch.cat(pooled, dim=1)))
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train BERT + CNN classifier.")
+    parser = argparse.ArgumentParser(description="Train Word2Vec + TextCNN classifier.")
     parser.add_argument("--data-csv", help="Full cleaned CSV for stratified k-fold cross-validation.")
     parser.add_argument("--train-csv", help="Optional explicit training CSV.")
     parser.add_argument("--valid-csv", help="Optional explicit validation CSV.")
@@ -59,16 +63,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fold-col", default="cv_fold")
     parser.add_argument("--cv-folds", type=int, default=10)
     parser.add_argument("--encoding", default="utf-8-sig")
-    parser.add_argument("--bert-model", default="hfl/chinese-roberta-wwm-ext")
     parser.add_argument("--max-len", type=int, default=256)
+    parser.add_argument("--min-freq", type=int, default=1)
+    parser.add_argument("--max-vocab-size", type=int, default=50000)
+    parser.add_argument("--embedding-dim", type=int, default=200)
+    parser.add_argument("--window", type=int, default=5)
+    parser.add_argument("--word2vec-epochs", type=int, default=10)
     parser.add_argument("--num-filters", type=int, default=128)
     parser.add_argument("--kernel-sizes", default="3,4,5")
-    parser.add_argument("--dropout", type=float, default=0.3)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--lr", type=float, default=2e-5)
-    parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--warmup-ratio", type=float, default=0.1)
+    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
     return parser.parse_args()
@@ -78,16 +85,25 @@ def parse_kernel_sizes(value: str) -> list[int]:
     return [int(item.strip()) for item in value.split(",") if item.strip()]
 
 
+def build_embedding_matrix(vocab: dict[str, int], w2v: Word2Vec, embedding_dim: int) -> np.ndarray:
+    rng = np.random.default_rng(42)
+    matrix = rng.normal(0, 0.05, size=(len(vocab), embedding_dim)).astype("float32")
+    matrix[vocab[PAD_TOKEN]] = 0.0
+    for token, idx in vocab.items():
+        if token in w2v.wv:
+            matrix[idx] = w2v.wv[token]
+    return matrix
+
+
 def evaluate(model: nn.Module, loader: DataLoader, device: torch.device, label_names: list[str]) -> dict[str, object]:
     model.eval()
     y_true: list[int] = []
     y_pred: list[int] = []
     with torch.no_grad():
-        for batch in loader:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            logits = model(input_ids, attention_mask)
-            y_true.extend(batch["labels"].numpy().tolist())
+        for input_ids, labels in loader:
+            input_ids = input_ids.to(device)
+            logits = model(input_ids)
+            y_true.extend(labels.numpy().tolist())
             y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy().tolist())
     return classification_metrics(y_true, y_pred, label_names)
 
@@ -102,25 +118,25 @@ def train_once(args: argparse.Namespace, train_df, valid_df, output_dir: Path, s
     y_train = encoder.transform(train_df[args.label_col])
     y_valid = encoder.transform(valid_df[args.label_col])
 
-    tokenizer = AutoTokenizer.from_pretrained(args.bert_model)
-    train_loader = DataLoader(
-        BertCnnDataset(train_df[args.text_col], y_train, tokenizer, args.max_len),
-        batch_size=args.batch_size,
-        shuffle=True,
+    tokenized_train = texts_to_tokens(train_df[args.text_col])
+    vocab = build_vocab(tokenized_train, min_freq=args.min_freq, max_vocab_size=args.max_vocab_size)
+    w2v = Word2Vec(
+        sentences=tokenized_train,
+        vector_size=args.embedding_dim,
+        window=args.window,
+        min_count=args.min_freq,
+        workers=4,
+        sg=1,
+        epochs=args.word2vec_epochs,
+        seed=seed,
     )
-    valid_loader = DataLoader(
-        BertCnnDataset(valid_df[args.text_col], y_valid, tokenizer, args.max_len),
-        batch_size=args.batch_size,
-    )
+    embedding_matrix = build_embedding_matrix(vocab, w2v, args.embedding_dim)
 
-    model = BertCNN(args.bert_model, len(encoder.classes_), args.num_filters, kernel_sizes, args.dropout).to(device)
+    train_loader = DataLoader(TextDataset(train_df[args.text_col], y_train, vocab, args.max_len), batch_size=args.batch_size, shuffle=True)
+    valid_loader = DataLoader(TextDataset(valid_df[args.text_col], y_valid, vocab, args.max_len), batch_size=args.batch_size)
+
+    model = Word2VecTextCNN(embedding_matrix, len(encoder.classes_), args.num_filters, kernel_sizes, args.dropout).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    total_steps = max(1, len(train_loader) * args.epochs)
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=int(total_steps * args.warmup_ratio),
-        num_training_steps=total_steps,
-    )
     criterion = nn.CrossEntropyLoss()
     best_f1 = -1.0
     best_metrics: dict[str, object] = {}
@@ -128,15 +144,13 @@ def train_once(args: argparse.Namespace, train_df, valid_df, output_dir: Path, s
     for epoch in range(1, args.epochs + 1):
         model.train()
         total_loss = 0.0
-        for batch in train_loader:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            labels = batch["labels"].to(device)
+        for input_ids, labels in train_loader:
+            input_ids = input_ids.to(device)
+            labels = labels.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(input_ids, attention_mask), labels)
+            loss = criterion(model(input_ids), labels)
             loss.backward()
             optimizer.step()
-            scheduler.step()
             total_loss += loss.item()
 
         metrics = evaluate(model, valid_loader, device, list(encoder.classes_))
@@ -146,10 +160,10 @@ def train_once(args: argparse.Namespace, train_df, valid_df, output_dir: Path, s
             best_metrics = metrics
             torch.save(model.state_dict(), output_dir / "best_model.pt")
 
-    tokenizer.save_pretrained(output_dir / "tokenizer")
+    save_vocab(vocab, output_dir)
     save_label_encoder(encoder, output_dir)
     config = vars(args).copy()
-    config.update({"model_type": "bert_cnn", "num_classes": len(encoder.classes_)})
+    config.update({"model_type": "word2vec_textcnn", "num_classes": len(encoder.classes_)})
     with (output_dir / "config.json").open("w", encoding="utf-8") as file:
         json.dump(config, file, ensure_ascii=False, indent=2)
     write_metrics(best_metrics, output_dir / "valid_metrics.json")
@@ -164,43 +178,46 @@ def train_final(args: argparse.Namespace, train_df, output_dir: Path, seed: int)
 
     encoder = fit_label_encoder(train_df[args.label_col])
     y_train = encoder.transform(train_df[args.label_col])
-    tokenizer = AutoTokenizer.from_pretrained(args.bert_model)
+    tokenized_train = texts_to_tokens(train_df[args.text_col])
+    vocab = build_vocab(tokenized_train, min_freq=args.min_freq, max_vocab_size=args.max_vocab_size)
+    w2v = Word2Vec(
+        sentences=tokenized_train,
+        vector_size=args.embedding_dim,
+        window=args.window,
+        min_count=args.min_freq,
+        workers=4,
+        sg=1,
+        epochs=args.word2vec_epochs,
+        seed=seed,
+    )
+    embedding_matrix = build_embedding_matrix(vocab, w2v, args.embedding_dim)
     train_loader = DataLoader(
-        BertCnnDataset(train_df[args.text_col], y_train, tokenizer, args.max_len),
+        TextDataset(train_df[args.text_col], y_train, vocab, args.max_len),
         batch_size=args.batch_size,
         shuffle=True,
     )
-
-    model = BertCNN(args.bert_model, len(encoder.classes_), args.num_filters, kernel_sizes, args.dropout).to(device)
+    model = Word2VecTextCNN(embedding_matrix, len(encoder.classes_), args.num_filters, kernel_sizes, args.dropout).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    total_steps = max(1, len(train_loader) * args.epochs)
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=int(total_steps * args.warmup_ratio),
-        num_training_steps=total_steps,
-    )
     criterion = nn.CrossEntropyLoss()
 
     for epoch in range(1, args.epochs + 1):
         model.train()
         total_loss = 0.0
-        for batch in train_loader:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            labels = batch["labels"].to(device)
+        for input_ids, labels in train_loader:
+            input_ids = input_ids.to(device)
+            labels = labels.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(input_ids, attention_mask), labels)
+            loss = criterion(model(input_ids), labels)
             loss.backward()
             optimizer.step()
-            scheduler.step()
             total_loss += loss.item()
         print(f"epoch={epoch} train_loss={total_loss / max(1, len(train_loader)):.4f}")
 
     torch.save(model.state_dict(), output_dir / "best_model.pt")
-    tokenizer.save_pretrained(output_dir / "tokenizer")
+    save_vocab(vocab, output_dir)
     save_label_encoder(encoder, output_dir)
     config = vars(args).copy()
-    config.update({"model_type": "bert_cnn", "num_classes": len(encoder.classes_), "training_mode": "final_train"})
+    config.update({"model_type": "word2vec_textcnn", "num_classes": len(encoder.classes_), "training_mode": "final_train"})
     with (output_dir / "config.json").open("w", encoding="utf-8") as file:
         json.dump(config, file, ensure_ascii=False, indent=2)
     return {"train_rows": len(train_df)}
@@ -230,7 +247,7 @@ def cross_validate(args: argparse.Namespace) -> dict[str, object]:
     cv_metrics = average_metrics(fold_metrics)
     write_metrics(cv_metrics, output_dir / "cv_metrics.json")
     with (output_dir / "config.json").open("w", encoding="utf-8") as file:
-        json.dump(vars(args) | {"model_type": "bert_cnn", "cv_folds_actual": len(folds)}, file, ensure_ascii=False, indent=2)
+        json.dump(vars(args) | {"model_type": "word2vec_textcnn", "cv_folds_actual": len(folds)}, file, ensure_ascii=False, indent=2)
     print(json.dumps({k: v for k, v in cv_metrics.items() if k != "fold_metrics"}, ensure_ascii=False, indent=2))
     return cv_metrics
 

@@ -1,4 +1,4 @@
-"""Preprocess patent title and abstract text for AI patent classification."""
+﻿"""Preprocess patent title and abstract text for AI patent classification."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ from typing import Iterable
 
 REQUIRED_COLUMNS = ["PN", "title", "abstract"]
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_HIT_STOPWORDS_PATH = PROJECT_ROOT / "data" / "stopwords" / "hit_stopwords.txt"
-DEFAULT_USER_STOPWORDS_PATH = PROJECT_ROOT / "data" / "stopwords" / "user_stopwords.txt"
-DEFAULT_PATENT_PHRASES_PATH = PROJECT_ROOT / "data" / "stopwords" / "patent_phrases.txt"
+DEFAULT_HIT_STOPWORDS_PATH = PROJECT_ROOT / "stopwords" / "hit_stopwords.txt"
+DEFAULT_USER_STOPWORDS_PATH = PROJECT_ROOT / "stopwords" / "user_stopwords.txt"
+DEFAULT_PATENT_PHRASES_PATH = PROJECT_ROOT / "stopwords" / "patent_phrases.txt"
 
 
 FALLBACK_STOPWORDS = {

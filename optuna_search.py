@@ -10,27 +10,23 @@ from types import SimpleNamespace
 
 import optuna
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from LLM.llm_classifier import train as train_llm_lora  # noqa: E402
-from LLM.llm_registry import MODEL_CONFIGS  # noqa: E402
-from Models.bert_cnn import train as train_bert_cnn  # noqa: E402
-from Models.word2vec_cnn import train as train_word2vec_cnn  # noqa: E402
-from Models.word2vec_textcnn import train as train_word2vec_textcnn  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from models.bert_cnn import train as train_bert_cnn  # noqa: E402
+from models.word2vec_cnn import train as train_word2vec_cnn  # noqa: E402
+from models.word2vec_textcnn import train as train_word2vec_textcnn  # noqa: E402
+
+
+MODEL_TYPES = ["word2vec_cnn", "word2vec_textcnn", "bert_cnn"]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Optuna hyperparameter search.")
-    parser.add_argument(
-        "--model-type",
-        required=True,
-        choices=["word2vec_cnn", "word2vec_textcnn", "bert_cnn", "llm_lora", "llama", "qwen", "glm", "mistral", "baichuan"],
-    )
-    parser.add_argument("--data-csv", required=True, help="Full cleaned CSV for stratified k-fold cross-validation.")
+    parser = argparse.ArgumentParser(description="Optuna hyperparameter search on a fixed validation set.")
+    parser.add_argument("--model-type", required=True, choices=MODEL_TYPES)
+    parser.add_argument("--train-csv", required=True, help="Training CSV file.")
+    parser.add_argument("--valid-csv", required=True, help="Validation CSV file.")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--text-col", default="text")
     parser.add_argument("--label-col", default="label")
-    parser.add_argument("--fold-col", default="cv_fold")
-    parser.add_argument("--cv-folds", type=int, default=10)
     parser.add_argument("--encoding", default="utf-8-sig")
     parser.add_argument("--n-trials", type=int, default=20)
     parser.add_argument("--timeout", type=int, default=None, help="Optuna timeout in seconds.")
@@ -38,22 +34,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
     parser.add_argument("--bert-model", default="hfl/chinese-roberta-wwm-ext")
-    parser.add_argument("--llm-model-key", default="qwen", choices=sorted(MODEL_CONFIGS))
-    parser.add_argument("--llm-base-model", default=None)
-    parser.add_argument("--lora-target-modules", default=None)
     return parser.parse_args()
 
 
 def suggest_word2vec_common(trial: optuna.Trial, args: argparse.Namespace, output_dir: Path) -> dict[str, object]:
     return {
-        "data_csv": args.data_csv,
-        "train_csv": None,
-        "valid_csv": None,
+        "data_csv": None,
+        "train_csv": args.train_csv,
+        "valid_csv": args.valid_csv,
         "output_dir": str(output_dir),
         "text_col": args.text_col,
         "label_col": args.label_col,
-        "fold_col": args.fold_col,
-        "cv_folds": args.cv_folds,
+        "fold_col": "cv_fold",
+        "cv_folds": 0,
         "encoding": args.encoding,
         "max_len": trial.suggest_categorical("max_len", [128, 256, 384]),
         "min_freq": trial.suggest_categorical("min_freq", [1, 2, 3]),
@@ -85,14 +78,14 @@ def build_trial_args(trial: optuna.Trial, args: argparse.Namespace, output_dir: 
 
     if args.model_type == "bert_cnn":
         return SimpleNamespace(
-            data_csv=args.data_csv,
-            train_csv=None,
-            valid_csv=None,
+            data_csv=None,
+            train_csv=args.train_csv,
+            valid_csv=args.valid_csv,
             output_dir=str(output_dir),
             text_col=args.text_col,
             label_col=args.label_col,
-            fold_col=args.fold_col,
-            cv_folds=args.cv_folds,
+            fold_col="cv_fold",
+            cv_folds=0,
             encoding=args.encoding,
             bert_model=args.bert_model,
             max_len=trial.suggest_categorical("max_len", [128, 256]),
@@ -108,36 +101,6 @@ def build_trial_args(trial: optuna.Trial, args: argparse.Namespace, output_dir: 
             device=args.device,
         )
 
-    if args.model_type in {"llm_lora", "llama", "qwen", "glm", "mistral", "baichuan"}:
-        model_key = args.llm_model_key if args.model_type == "llm_lora" else args.model_type
-        return SimpleNamespace(
-            model_key=model_key,
-            data_csv=args.data_csv,
-            train_csv=None,
-            valid_csv=None,
-            output_dir=str(output_dir),
-            text_col=args.text_col,
-            label_col=args.label_col,
-            fold_col=args.fold_col,
-            cv_folds=args.cv_folds,
-            encoding=args.encoding,
-            base_model=args.llm_base_model,
-            max_len=trial.suggest_categorical("max_len", [128, 256]),
-            batch_size=trial.suggest_categorical("batch_size", [2, 4, 8]),
-            epochs=trial.suggest_int("epochs", 2, 5),
-            lr=trial.suggest_float("lr", 1e-5, 5e-5, log=True),
-            weight_decay=trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True),
-            warmup_ratio=trial.suggest_float("warmup_ratio", 0.0, 0.2),
-            lora_r=trial.suggest_categorical("lora_r", [4, 8, 16]),
-            lora_alpha=trial.suggest_categorical("lora_alpha", [8, 16, 32]),
-            lora_dropout=trial.suggest_float("lora_dropout", 0.0, 0.2),
-            lora_target_modules=args.lora_target_modules,
-            trust_remote_code=False,
-            torch_dtype=None,
-            seed=args.seed,
-            device=args.device,
-        )
-
     raise ValueError(f"Unsupported model type: {args.model_type}")
 
 
@@ -148,8 +111,6 @@ def train_one_model(model_type: str, trial_args: SimpleNamespace) -> dict[str, o
         return train_word2vec_textcnn(trial_args)
     if model_type == "bert_cnn":
         return train_bert_cnn(trial_args)
-    if model_type in {"llm_lora", "llama", "qwen", "glm", "mistral", "baichuan"}:
-        return train_llm_lora(trial_args)
     raise ValueError(f"Unsupported model type: {model_type}")
 
 
@@ -187,4 +148,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
