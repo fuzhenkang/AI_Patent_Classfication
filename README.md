@@ -1,6 +1,7 @@
-﻿# AI Patent Classification
+# AI Patent Classification
 
-本仓库用于根据专利标题、摘要等文本信息识别 AI 专利。
+本仓库用于根据专利标题、摘要等文本信息识别 AI 专利。当前项目已整理为简洁结构：不再包含 `LLM` 和 `PromptClassification`，主要保留文本预处理、数据划分、传统深度学习分类模型、Optuna 寻优、最终训练和测试集评估流程。
+
 ## 项目结构
 
 ```text
@@ -10,7 +11,7 @@ optuna_search.py          基于训练集和验证集进行 Optuna 参数寻优
 train_best_model.py       使用 Optuna 最优参数重新训练最终模型
 evaluate_model.py         在测试集上评估最终模型
 requirements.txt          Python 依赖
-models/                   Word2Vec+CNN、Word2Vec+TextCNN、BERT+CNN 及公共工具
+models/                   Word2Vec+CNN、Word2Vec+TextCNN、BERT+CNN、BERT线性分类头及公共工具
 stopwords/                哈工大停用词、专利固定表述和用户补充停用词
 data/                     预留数据目录，用于后续存放原始数据、清洗数据和划分数据
 ```
@@ -136,6 +137,20 @@ python optuna_search.py `
   --n-trials 10
 ```
 
+BERT 线性分类头：
+
+```powershell
+python optuna_search.py `
+  --model-type bert_linear `
+  --train-csv data\split\train.csv `
+  --valid-csv data\split\valid.csv `
+  --output-dir outputs\optuna\bert_linear `
+  --text-col text `
+  --label-col label `
+  --bert-model hfl/chinese-roberta-wwm-ext `
+  --n-trials 10
+```
+
 输出：
 
 ```text
@@ -183,6 +198,19 @@ python train_best_model.py `
   --bert-model hfl/chinese-roberta-wwm-ext
 ```
 
+BERT 线性分类头：
+
+```powershell
+python train_best_model.py `
+  --model-type bert_linear `
+  --best-params outputs\optuna\bert_linear\best_params.json `
+  --train-csv data\split\train.csv `
+  --output-dir outputs\final\bert_linear `
+  --text-col text `
+  --label-col label `
+  --bert-model hfl/chinese-roberta-wwm-ext
+```
+
 ## 5. 测试集评估
 
 ```powershell
@@ -207,4 +235,5 @@ outputs/evaluation/<model_name>/predictions.csv
 models/word2vec_cnn.py      Word2Vec + CNN
 models/word2vec_textcnn.py  Word2Vec + TextCNN
 models/bert_cnn.py          BERT + CNN
+models/bert_linear.py       BERT + 线性分类头，基于 AutoModelForSequenceClassification
 ```
