@@ -1,6 +1,6 @@
 # AI Patent Classification
 
-本仓库用于根据专利标题、摘要等文本信息识别 AI 专利。当前项目已整理为简洁结构：不再包含 `LLM` 和 `PromptClassification`，主要保留文本预处理、数据划分、传统深度学习分类模型、Optuna 寻优、最终训练和测试集评估流程。
+本仓库用于根据专利标题、摘要等文本信息识别 AI 专利。
 
 ## 项目结构
 
@@ -46,10 +46,10 @@ label     分类标签，默认 0/1，也可以是文字标签
 ## 1. 文本预处理
 
 ```powershell
-python preprocess_patents.py `
-  --input data\raw\patents.csv `
-  --output data\processed\patents_cleaned.csv `
-  --stats-output data\processed\text_length_stats.csv `
+python preprocess_patents.py \
+  --input data\raw\patents.csv \
+  --output data\processed\patents_cleaned.csv \
+  --stats-output data\processed\text_length_stats.csv v
   --keep-original-columns
 ```
 
@@ -74,13 +74,13 @@ stopwords/user_stopwords.txt
 ## 2. 划分训练集、验证集和测试集
 
 ```powershell
-python split_train_test.py `
-  --input data\processed\patents_cleaned.csv `
-  --output-dir data\split `
-  --label-col label `
-  --train-ratio 0.8 `
-  --valid-ratio 0.1 `
-  --test-ratio 0.1 `
+python split_train_test.py \
+  --input data\processed\patents_cleaned.csv v
+  --output-dir data\split v
+  --label-col label \
+  --train-ratio 0.8 \
+  --valid-ratio 0.1 \
+  --test-ratio 0.1 \
   --seed 42
 ```
 
@@ -100,13 +100,13 @@ data/split/split_summary.csv
 以 Word2Vec + CNN 为例：
 
 ```powershell
-python optuna_search.py `
-  --model-type word2vec_cnn `
-  --train-csv data\split\train.csv `
-  --valid-csv data\split\valid.csv `
-  --output-dir outputs\optuna\word2vec_cnn `
-  --text-col text `
-  --label-col label `
+python optuna_search.py \
+  --model-type word2vec_cnn \
+  --train-csv data\split\train.csv \
+  --valid-csv data\split\valid.csv \
+  --output-dir outputs\optuna\word2vec_cnn \
+  --text-col text \
+  --label-col label \
   --n-trials 20
 ```
 
@@ -126,28 +126,28 @@ python optuna_search.py `
 BERT + CNN：
 
 ```powershell
-python optuna_search.py `
-  --model-type bert_cnn `
-  --train-csv data\split\train.csv `
-  --valid-csv data\split\valid.csv `
-  --output-dir outputs\optuna\bert_cnn `
-  --text-col text `
-  --label-col label `
-  --bert-model hfl/chinese-roberta-wwm-ext `
+python optuna_search.py \
+  --model-type bert_cnn \
+  --train-csv data\split\train.csv \
+  --valid-csv data\split\valid.csv \
+  --output-dir outputs\optuna\bert_cnn \
+  --text-col text \
+  --label-col label \
+  --bert-model hfl/chinese-roberta-wwm-ext \
   --n-trials 10
 ```
 
 BERT 线性分类头：
 
 ```powershell
-python optuna_search.py `
-  --model-type bert_linear `
-  --train-csv data\split\train.csv `
-  --valid-csv data\split\valid.csv `
-  --output-dir outputs\optuna\bert_linear `
-  --text-col text `
-  --label-col label `
-  --bert-model hfl/chinese-roberta-wwm-ext `
+python optuna_search.py \
+  --model-type bert_linear \
+  --train-csv data\split\train.csv \
+  --valid-csv data\split\valid.csv \
+  --output-dir outputs\optuna\bert_linear \
+  --text-col text \
+  --label-col label \
+  --bert-model hfl/chinese-roberta-wwm-ext \
   --n-trials 10
 ```
 
@@ -164,61 +164,61 @@ outputs/optuna/<model_name>/trial_0000/
 Word2Vec + CNN：
 
 ```powershell
-python train_best_model.py `
-  --model-type word2vec_cnn `
-  --best-params outputs\optuna\word2vec_cnn\best_params.json `
-  --train-csv data\split\train.csv `
-  --output-dir outputs\final\word2vec_cnn `
-  --text-col text `
+python train_best_model.py \
+  --model-type word2vec_cnn \
+  --best-params outputs\optuna\word2vec_cnn\best_params.json \
+  --train-csv data\split\train.csv \
+  --output-dir outputs\final\word2vec_cnn \
+  --text-col text \
   --label-col label
 ```
 
 Word2Vec + TextCNN：
 
 ```powershell
-python train_best_model.py `
-  --model-type word2vec_textcnn `
-  --best-params outputs\optuna\word2vec_textcnn\best_params.json `
-  --train-csv data\split\train.csv `
-  --output-dir outputs\final\word2vec_textcnn `
-  --text-col text `
+python train_best_model.py \
+  --model-type word2vec_textcnn \
+  --best-params outputs\optuna\word2vec_textcnn\best_params.json \
+  --train-csv data\split\train.csv \
+  --output-dir outputs\final\word2vec_textcnn \
+  --text-col text \
   --label-col label
 ```
 
 BERT + CNN：
 
 ```powershell
-python train_best_model.py `
-  --model-type bert_cnn `
-  --best-params outputs\optuna\bert_cnn\best_params.json `
-  --train-csv data\split\train.csv `
-  --output-dir outputs\final\bert_cnn `
-  --text-col text `
-  --label-col label `
+python train_best_model.py \
+  --model-type bert_cnn \
+  --best-params outputs\optuna\bert_cnn\best_params.json \
+  --train-csv data\split\train.csv \
+  --output-dir outputs\final\bert_cnn \
+  --text-col text \
+  --label-col label \
   --bert-model hfl/chinese-roberta-wwm-ext
 ```
 
 BERT 线性分类头：
 
 ```powershell
-python train_best_model.py `
+python train_best_model.py \
   --model-type bert_linear `
-  --best-params outputs\optuna\bert_linear\best_params.json `
-  --train-csv data\split\train.csv `
-  --output-dir outputs\final\bert_linear `
-  --text-col text `
-  --label-col label `
+  --best-params outputs\optuna\bert_linear\best_params.json \
+  --train-csv data\split\train.csv \
+  --output-dir outputs\final\bert_linear \
+  --text-col text \
+  --label-col label \
   --bert-model hfl/chinese-roberta-wwm-ext
 ```
 
 ## 5. 测试集评估
 
 ```powershell
-python evaluate_model.py `
-  --model-dir outputs\final\word2vec_cnn `
-  --test-csv data\split\test.csv `
-  --output-dir outputs\evaluation\word2vec_cnn `
-  --text-col text `
+python evaluate_model.py \
+  --model-dir outputs\final\word2vec_cnn \
+  --test-csv data\split\test.csv \
+  --output-dir outputs\evaluation\word2vec_cnn \
+  --text-col text \
   --label-col label
 ```
 
