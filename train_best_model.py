@@ -1,4 +1,4 @@
-﻿"""Retrain the selected model on the full training set using Optuna best parameters."""
+"""Retrain the selected model on the full training set using Optuna best parameters."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
-MODEL_TYPES = ["word2vec_cnn", "word2vec_textcnn", "bert_cnn"]
+MODEL_TYPES = ["word2vec_cnn", "word2vec_textcnn", "bert_cnn", "bert_linear"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,7 +69,7 @@ def build_args(args: argparse.Namespace, best_params: dict[str, object]) -> Simp
         else:
             params.setdefault("kernel_sizes", "3,4,5")
 
-    if args.model_type == "bert_cnn":
+    if args.model_type in {"bert_cnn", "bert_linear"}:
         params.setdefault("bert_model", args.bert_model)
         params.setdefault("kernel_sizes", "3,4,5")
         params.setdefault("warmup_ratio", 0.1)
@@ -91,8 +91,10 @@ def main() -> int:
         from models.word2vec_cnn import train
     elif args.model_type == "word2vec_textcnn":
         from models.word2vec_textcnn import train
-    else:
+    elif args.model_type == "bert_cnn":
         from models.bert_cnn import train
+    else:
+        from models.bert_linear import train
 
     train(final_args)
     print(f"Final model saved to: {args.output_dir}")
