@@ -49,7 +49,7 @@ label     分类标签，默认 0/1，也可以是文字标签
 python preprocess_patents.py \
   --input data\raw\patents.csv \
   --output data\processed\patents_cleaned.csv \
-  --stats-output data\processed\text_length_stats.csv v
+  --stats-output data\processed\text_length_stats.csv \
   --keep-original-columns
 ```
 
