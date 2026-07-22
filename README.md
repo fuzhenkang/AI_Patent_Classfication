@@ -110,6 +110,15 @@ python optuna_search.py \
   --n-trials 20
 ```
 
+
+如需加载已经训练好的 Word2Vec 词向量，可以在 Word2Vec + CNN 或 Word2Vec + TextCNN 命令中加入：
+
+```powershell
+  --pretrained-word2vec path\to\vectors.model `
+  --pretrained-word2vec-format auto
+```
+
+支持格式：`.model` 为 gensim `Word2Vec.save()` 格式；`.bin` 为 word2vec binary 格式；`.txt`/`.vec` 为 word2vec text 格式。若不传 `--pretrained-word2vec`，程序会按原逻辑在训练语料上重新训练 Word2Vec。
 Word2Vec + TextCNN：
 
 ```powershell
@@ -151,6 +160,20 @@ python optuna_search.py \
   --n-trials 10
 ```
 
+BERT 线性分类头：
+
+```powershell
+python optuna_search.py `
+  --model-type bert_linear `
+  --train-csv data\split\train.csv `
+  --valid-csv data\split\valid.csv `
+  --output-dir outputs\optuna\bert_linear `
+  --text-col text `
+  --label-col label `
+  --bert-model hfl/chinese-roberta-wwm-ext `
+  --n-trials 10
+```
+
 输出：
 
 ```text
@@ -173,6 +196,15 @@ python train_best_model.py \
   --label-col label
 ```
 
+
+如需加载已经训练好的 Word2Vec 词向量，可以在 Word2Vec + CNN 或 Word2Vec + TextCNN 命令中加入：
+
+```powershell
+  --pretrained-word2vec path\to\vectors.model `
+  --pretrained-word2vec-format auto
+```
+
+支持格式：`.model` 为 gensim `Word2Vec.save()` 格式；`.bin` 为 word2vec binary 格式；`.txt`/`.vec` 为 word2vec text 格式。若不传 `--pretrained-word2vec`，程序会按原逻辑在训练语料上重新训练 Word2Vec。
 Word2Vec + TextCNN：
 
 ```powershell
@@ -208,6 +240,20 @@ python train_best_model.py \
   --output-dir outputs\final\bert_linear \
   --text-col text \
   --label-col label \
+  --bert-model hfl/chinese-roberta-wwm-ext
+```
+
+
+BERT 线性分类头：
+
+```powershell
+python train_best_model.py `
+  --model-type bert_linear `
+  --best-params outputs\optuna\bert_linear\best_params.json `
+  --train-csv data\split\train.csv `
+  --output-dir outputs\final\bert_linear `
+  --text-col text `
+  --label-col label `
   --bert-model hfl/chinese-roberta-wwm-ext
 ```
 
