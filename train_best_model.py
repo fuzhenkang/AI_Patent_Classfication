@@ -26,6 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
     parser.add_argument("--bert-model", default="hfl/chinese-roberta-wwm-ext")
+    parser.add_argument("--pretrained-word2vec", default=None, help="Path to pretrained Word2Vec vectors for word2vec_cnn/word2vec_textcnn.")
+    parser.add_argument("--pretrained-word2vec-format", default="auto", choices=["auto", "gensim", "keyedvectors", "word2vec-bin", "word2vec-text"])
     return parser.parse_args()
 
 
@@ -55,6 +57,8 @@ def build_args(args: argparse.Namespace, best_params: dict[str, object]) -> Simp
         "weight_decay": 0.0,
         "dropout": 0.5,
         "num_filters": 128,
+        "pretrained_word2vec": args.pretrained_word2vec,
+        "pretrained_word2vec_format": args.pretrained_word2vec_format,
     }
     params.update(best_params)
 
@@ -64,6 +68,8 @@ def build_args(args: argparse.Namespace, best_params: dict[str, object]) -> Simp
         params.setdefault("embedding_dim", 200)
         params.setdefault("window", 5)
         params.setdefault("word2vec_epochs", 10)
+        params.setdefault("pretrained_word2vec", args.pretrained_word2vec)
+        params.setdefault("pretrained_word2vec_format", args.pretrained_word2vec_format)
         if args.model_type == "word2vec_cnn":
             params.setdefault("kernel_size", 3)
         else:
