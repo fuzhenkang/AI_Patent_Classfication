@@ -1,4 +1,4 @@
-﻿"""Train a Word2Vec + CNN classifier for cleaned patent text."""
+"""Train a Word2Vec + CNN classifier for cleaned patent text."""
 
 from __future__ import annotations
 
@@ -18,10 +18,12 @@ from models.common import (  # noqa: E402
     PAD_TOKEN,
     TextDataset,
     average_metrics,
+    build_embedding_matrix,
     build_vocab,
     classification_metrics,
     fit_label_encoder,
     get_device,
+    load_word_vectors,
     read_text_label_csv,
     save_label_encoder,
     save_vocab,
@@ -65,6 +67,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embedding-dim", type=int, default=200)
     parser.add_argument("--window", type=int, default=5)
     parser.add_argument("--word2vec-epochs", type=int, default=10)
+    parser.add_argument("--pretrained-word2vec", default=None, help="Path to pretrained Word2Vec vectors. Supports .model, .bin, .txt/.vec, or gensim KeyedVectors files.")
+    parser.add_argument("--pretrained-word2vec-format", default="auto", choices=["auto", "gensim", "keyedvectors", "word2vec-bin", "word2vec-text"])
     parser.add_argument("--num-filters", type=int, default=128)
     parser.add_argument("--kernel-size", type=int, default=3)
     parser.add_argument("--dropout", type=float, default=0.5)
@@ -77,15 +81,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_embedding_matrix(vocab: dict[str, int], w2v: Word2Vec, embedding_dim: int) -> np.ndarray:
-    rng = np.random.default_rng(42)
-    matrix = rng.normal(0, 0.05, size=(len(vocab), embedding_dim)).astype("float32")
-    matrix[vocab[PAD_TOKEN]] = 0.0
-    for token, idx in vocab.items():
-        if token in w2v.wv:
-            matrix[idx] = w2v.wv[token]
-    return matrix
+def prepare_embedding_matrix(args: argparse.Namespace, tokenized_train, vocab: dict[str, int], seed: int) -> np.ndarray:
+    if getattr(args, "pretrained_word2vec", None):
+        vectors = load_word_vectors(args.pretrained_word2vec, args.pretrained_word2vec_format)
+        args.embedding_dim = int(vectors.vector_size)
+        print(f"loaded pretrained Word2Vec: {args.pretrained_word2vec} dim={args.embedding_dim}")
+        return build_embedding_matrix(vocab, vectors, seed=seed)
 
+    w2v = Word2Vec(
+        sentences=tokenized_train,
+        vector_size=args.embedding_dim,
+        window=args.window,
+        min_count=args.min_freq,
+        workers=4,
+        sg=1,
+        epochs=args.word2vec_epochs,
+        seed=seed,
+    )
+    return build_embedding_matrix(vocab, w2v.wv, args.embedding_dim, seed=seed)
 
 def evaluate(model: nn.Module, loader: DataLoader, device: torch.device, label_names: list[str]) -> dict[str, object]:
     model.eval()
@@ -111,17 +124,7 @@ def train_once(args: argparse.Namespace, train_df, valid_df, output_dir: Path, s
 
     tokenized_train = texts_to_tokens(train_df[args.text_col])
     vocab = build_vocab(tokenized_train, min_freq=args.min_freq, max_vocab_size=args.max_vocab_size)
-    w2v = Word2Vec(
-        sentences=tokenized_train,
-        vector_size=args.embedding_dim,
-        window=args.window,
-        min_count=args.min_freq,
-        workers=4,
-        sg=1,
-        epochs=args.word2vec_epochs,
-        seed=seed,
-    )
-    embedding_matrix = build_embedding_matrix(vocab, w2v, args.embedding_dim)
+    embedding_matrix = prepare_embedding_matrix(args, tokenized_train, vocab, seed)
 
     train_loader = DataLoader(TextDataset(train_df[args.text_col], y_train, vocab, args.max_len), batch_size=args.batch_size, shuffle=True)
     valid_loader = DataLoader(TextDataset(valid_df[args.text_col], y_valid, vocab, args.max_len), batch_size=args.batch_size)
@@ -170,17 +173,7 @@ def train_final(args: argparse.Namespace, train_df, output_dir: Path, seed: int)
     y_train = encoder.transform(train_df[args.label_col])
     tokenized_train = texts_to_tokens(train_df[args.text_col])
     vocab = build_vocab(tokenized_train, min_freq=args.min_freq, max_vocab_size=args.max_vocab_size)
-    w2v = Word2Vec(
-        sentences=tokenized_train,
-        vector_size=args.embedding_dim,
-        window=args.window,
-        min_count=args.min_freq,
-        workers=4,
-        sg=1,
-        epochs=args.word2vec_epochs,
-        seed=seed,
-    )
-    embedding_matrix = build_embedding_matrix(vocab, w2v, args.embedding_dim)
+    embedding_matrix = prepare_embedding_matrix(args, tokenized_train, vocab, seed)
     train_loader = DataLoader(
         TextDataset(train_df[args.text_col], y_train, vocab, args.max_len),
         batch_size=args.batch_size,
