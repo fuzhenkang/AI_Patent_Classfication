@@ -134,6 +134,7 @@ def evaluate_bert(config: dict[str, object], model_dir: Path, test_df: pd.DataFr
     return metrics
 
 
+
 def evaluate_bert_linear(config: dict[str, object], model_dir: Path, test_df: pd.DataFrame, labels: np.ndarray, output_dir: Path, device: torch.device, batch_size: int) -> dict[str, object]:
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
