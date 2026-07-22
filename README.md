@@ -76,7 +76,7 @@ stopwords/user_stopwords.txt
 ```powershell
 python split_train_test.py \
   --input data\processed\patents_cleaned.csv \
-  --output-dir data\split v
+  --output-dir data\split \
   --label-col label \
   --train-ratio 0.8 \
   --valid-ratio 0.1 \
@@ -122,13 +122,13 @@ python optuna_search.py \
 Word2Vec + TextCNN：
 
 ```powershell
-python optuna_search.py `
-  --model-type word2vec_textcnn `
-  --train-csv data\split\train.csv `
-  --valid-csv data\split\valid.csv `
-  --output-dir outputs\optuna\word2vec_textcnn `
-  --text-col text `
-  --label-col label `
+python optuna_search.py \
+  --model-type word2vec_textcnn \
+  --train-csv data\split\train.csv \
+  --valid-csv data\split\valid.csv \
+  --output-dir outputs\optuna\word2vec_textcnn \
+  --text-col text \
+  --label-col label \
   --n-trials 20
 ```
 
@@ -163,14 +163,14 @@ python optuna_search.py \
 BERT 线性分类头：
 
 ```powershell
-python optuna_search.py `
-  --model-type bert_linear `
-  --train-csv data\split\train.csv `
-  --valid-csv data\split\valid.csv `
-  --output-dir outputs\optuna\bert_linear `
-  --text-col text `
-  --label-col label `
-  --bert-model hfl/chinese-roberta-wwm-ext `
+python optuna_search.py \
+  --model-type bert_linear \
+  --train-csv data\split\train.csv \
+  --valid-csv data\split\valid.csv \
+  --output-dir outputs\optuna\bert_linear \
+  --text-col text \
+  --label-col label \
+  --bert-model hfl/chinese-roberta-wwm-ext \
   --n-trials 10
 ```
 
@@ -200,7 +200,7 @@ python train_best_model.py \
 如需加载已经训练好的 Word2Vec 词向量，可以在 Word2Vec + CNN 或 Word2Vec + TextCNN 命令中加入：
 
 ```powershell
-  --pretrained-word2vec path\to\vectors.model `
+  --pretrained-word2vec path\to\vectors.model \
   --pretrained-word2vec-format auto
 ```
 
@@ -247,13 +247,13 @@ python train_best_model.py \
 BERT 线性分类头：
 
 ```powershell
-python train_best_model.py `
-  --model-type bert_linear `
-  --best-params outputs\optuna\bert_linear\best_params.json `
-  --train-csv data\split\train.csv `
-  --output-dir outputs\final\bert_linear `
-  --text-col text `
-  --label-col label `
+python train_best_model.py \
+  --model-type bert_linear \
+  --best-params outputs\optuna\bert_linear\best_params.json \
+  --train-csv data\split\train.csv \
+  --output-dir outputs\final\bert_linear \
+  --text-col text \
+  --label-col label \
   --bert-model hfl/chinese-roberta-wwm-ext
 ```
 
