@@ -35,11 +35,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
     parser.add_argument("--bert-model", default="hfl/chinese-roberta-wwm-ext")
+    parser.add_argument("--pretrained-word2vec", default=None, help="Path to pretrained Word2Vec vectors for word2vec_cnn/word2vec_textcnn.")
+    parser.add_argument("--pretrained-word2vec-format", default="auto", choices=["auto", "gensim", "keyedvectors", "word2vec-bin", "word2vec-text"])
     return parser.parse_args()
 
 
 def suggest_word2vec_common(trial: optuna.Trial, args: argparse.Namespace, output_dir: Path) -> dict[str, object]:
-    return {
+    params = {
         "data_csv": None,
         "train_csv": args.train_csv,
         "valid_csv": args.valid_csv,
@@ -52,9 +54,8 @@ def suggest_word2vec_common(trial: optuna.Trial, args: argparse.Namespace, outpu
         "max_len": trial.suggest_categorical("max_len", [128, 256, 384]),
         "min_freq": trial.suggest_categorical("min_freq", [1, 2, 3]),
         "max_vocab_size": trial.suggest_categorical("max_vocab_size", [30000, 50000, 80000]),
-        "embedding_dim": trial.suggest_categorical("embedding_dim", [100, 200, 300]),
-        "window": trial.suggest_categorical("window", [3, 5, 7]),
-        "word2vec_epochs": trial.suggest_int("word2vec_epochs", 5, 20),
+        "pretrained_word2vec": args.pretrained_word2vec,
+        "pretrained_word2vec_format": args.pretrained_word2vec_format,
         "num_filters": trial.suggest_categorical("num_filters", [64, 128, 256]),
         "dropout": trial.suggest_float("dropout", 0.2, 0.6),
         "batch_size": trial.suggest_categorical("batch_size", [32, 64, 128]),
@@ -64,6 +65,17 @@ def suggest_word2vec_common(trial: optuna.Trial, args: argparse.Namespace, outpu
         "seed": args.seed,
         "device": args.device,
     }
+    if args.pretrained_word2vec:
+        params.update({"embedding_dim": 0, "window": 0, "word2vec_epochs": 0})
+    else:
+        params.update(
+            {
+                "embedding_dim": trial.suggest_categorical("embedding_dim", [100, 200, 300]),
+                "window": trial.suggest_categorical("window", [3, 5, 7]),
+                "word2vec_epochs": trial.suggest_int("word2vec_epochs", 5, 20),
+            }
+        )
+    return params
 
 
 def build_trial_args(trial: optuna.Trial, args: argparse.Namespace, output_dir: Path) -> SimpleNamespace:
@@ -101,6 +113,7 @@ def build_trial_args(trial: optuna.Trial, args: argparse.Namespace, output_dir: 
             seed=args.seed,
             device=args.device,
         )
+
 
     if args.model_type == "bert_linear":
         return SimpleNamespace(
