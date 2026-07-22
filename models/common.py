@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from gensim.models import KeyedVectors, Word2Vec
 from torch.utils.data import Dataset
 
 
@@ -116,6 +117,53 @@ def build_vocab(tokenized_texts: Sequence[Sequence[str]], min_freq: int = 1, max
         vocab[token] = len(vocab)
     return vocab
 
+
+def load_word_vectors(path: str | Path, vector_format: str = "auto"):
+    vector_path = Path(path)
+    if not vector_path.exists():
+        raise FileNotFoundError(f"Pretrained Word2Vec file not found: {vector_path}")
+
+    fmt = vector_format.lower()
+    if fmt == "auto":
+        suffix = vector_path.suffix.lower()
+        if suffix == ".model":
+            fmt = "gensim"
+        elif suffix == ".bin":
+            fmt = "word2vec-bin"
+        elif suffix in {".txt", ".vec"}:
+            fmt = "word2vec-text"
+        else:
+            fmt = "keyedvectors"
+
+    if fmt == "gensim":
+        return Word2Vec.load(str(vector_path)).wv
+    if fmt == "keyedvectors":
+        return KeyedVectors.load(str(vector_path), mmap="r")
+    if fmt == "word2vec-bin":
+        return KeyedVectors.load_word2vec_format(str(vector_path), binary=True)
+    if fmt == "word2vec-text":
+        return KeyedVectors.load_word2vec_format(str(vector_path), binary=False)
+    raise ValueError(
+        "Unsupported --pretrained-word2vec-format. "
+        "Choose from: auto, gensim, keyedvectors, word2vec-bin, word2vec-text."
+    )
+
+
+def build_embedding_matrix(vocab: dict[str, int], vectors, embedding_dim: int | None = None, seed: int = 42) -> np.ndarray:
+    keyed_vectors = vectors.wv if hasattr(vectors, "wv") else vectors
+    vector_size = int(getattr(keyed_vectors, "vector_size", embedding_dim or 0))
+    if vector_size <= 0:
+        raise ValueError("Cannot infer Word2Vec vector size. Please provide a valid pretrained vector file.")
+    if embedding_dim is not None and int(embedding_dim) != vector_size:
+        raise ValueError(f"Embedding dim mismatch: args.embedding_dim={embedding_dim}, vector_size={vector_size}.")
+
+    rng = np.random.default_rng(seed)
+    matrix = rng.normal(0, 0.05, size=(len(vocab), vector_size)).astype("float32")
+    matrix[vocab[PAD_TOKEN]] = 0.0
+    for token, idx in vocab.items():
+        if token in keyed_vectors:
+            matrix[idx] = keyed_vectors[token]
+    return matrix
 
 def encode_tokens(tokens: Sequence[str], vocab: dict[str, int], max_len: int) -> list[int]:
     ids = [vocab.get(token, vocab[UNK_TOKEN]) for token in tokens[:max_len]]
